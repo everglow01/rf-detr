@@ -153,7 +153,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint-interval", type=int, default=5)
     parser.add_argument("--resume", type=Path)
     parser.add_argument("--unfreeze-encoder", action="store_true")
-    parser.add_argument("--use-ema", action="store_true")
+    parser.add_argument(
+        "--use-ema",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Use exponential moving average weights (disable with --no-use-ema)",
+    )
     parser.add_argument("--multi-scale", action="store_true")
     parser.add_argument("--tensorboard", action="store_true")
     parser.add_argument("--seed", type=int, default=42)
