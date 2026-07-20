@@ -16,6 +16,7 @@ __all__ = [
     "RFDETRBase",
     "RFDETRKeypointPreview",
     "RFDETRLingBotSmall",
+    "RFDETRLingBotSmallSeg",
     "RFDETRNano",
     "RFDETRSmall",
     "RFDETRMedium",
@@ -41,6 +42,7 @@ from rfdetr.config import (
     RFDETRLargeConfig,
     RFDETRLargeDeprecatedConfig,
     RFDETRLingBotSmallConfig,
+    RFDETRLingBotSmallSegConfig,
     RFDETRMediumConfig,
     RFDETRNanoConfig,
     RFDETRSeg2XLargeConfig,
@@ -234,6 +236,13 @@ class RFDETRSeg(RFDETR):
     """
 
     _train_config_class = SegmentationTrainConfig
+
+
+class RFDETRLingBotSmallSeg(RFDETRSeg):
+    """Train or run instance segmentation with LingBot-Vision Small."""
+
+    size = "rfdetr-lingbot-small-seg"
+    _model_config_class = RFDETRLingBotSmallSegConfig
 
 
 @deprecated_class(

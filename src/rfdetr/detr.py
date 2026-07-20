@@ -58,6 +58,7 @@ _VARIANT_EXPORTS = (
     "RFDETRLarge",
     "RFDETRLargeDeprecated",
     "RFDETRLingBotSmall",
+    "RFDETRLingBotSmallSeg",
     "RFDETRMedium",
     "RFDETRNano",
     "RFDETRSeg",
@@ -79,6 +80,7 @@ _CHECKPOINT_MODEL_NAME_CLASS_SYMBOLS: tuple[str, ...] = tuple(
 _CHECKPOINT_PLUS_MODEL_NAME_CLASS_SYMBOLS: tuple[str, ...] = ("RFDETRXLarge", "RFDETR2XLarge")
 _CHECKPOINT_MODEL_MAP_ENTRIES: tuple[tuple[str, str], ...] = (
     ("keypoint-preview", "RFDETRKeypointPreview"),
+    ("lingbot-small-seg", "RFDETRLingBotSmallSeg"),
     ("seg-2xlarge", "RFDETRSeg2XLarge"),
     ("seg-xxlarge", "RFDETRSeg2XLarge"),
     ("seg-xlarge", "RFDETRSegXLarge"),

@@ -20,6 +20,7 @@ from rfdetr.config import (
     RFDETRBaseConfig,
     RFDETRLargeConfig,
     RFDETRLingBotSmallConfig,
+    RFDETRLingBotSmallSegConfig,
     RFDETRMediumConfig,
     RFDETRNanoConfig,
     RFDETRSeg2XLargeConfig,
@@ -206,6 +207,15 @@ class TestRFDETRLingBotSmallConfig:
         config = RFDETRLingBotSmallConfig(backbone_weights=weights_path)
 
         assert config.backbone_weights == os.path.realpath(os.fspath(weights_path))
+
+    def test_segmentation_variant_preserves_backbone_contract(self) -> None:
+        config = RFDETRLingBotSmallSegConfig()
+
+        assert config.segmentation_head
+        assert config.encoder == "lingbot_vision_small"
+        assert config.out_feature_indexes == [11]
+        assert config.projector_scale == ["P4"]
+        assert config.pretrain_weights is None
 
 
 class TestSegmentationTrainConfigNumSelect:

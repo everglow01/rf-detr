@@ -14,6 +14,7 @@ import pytest
 
 from rfdetr.config import (
     RFDETRBaseConfig,
+    RFDETRLingBotSmallSegConfig,
     RFDETRSegNanoConfig,
     SegmentationTrainConfig,
     TrainConfig,
@@ -77,6 +78,14 @@ class TestBuildModelFromConfig:
         mc = RFDETRSegNanoConfig()
         model = build_model_from_config(mc)
         assert model.segmentation_head is not None, "Expected segmentation_head to be created for RFDETRSegNanoConfig"
+
+    def test_lingbot_segmentation_uses_p4_spatial_features(self) -> None:
+        """The LingBot segmentation variant should build a mask head over its single P4 feature."""
+        mc = RFDETRLingBotSmallSegConfig(backbone_weights=None, num_classes=3)
+        model = build_model_from_config(mc)
+
+        assert model.segmentation_head is not None
+        assert model.backbone[0].encoder.patch_size == 16
 
     def test_drop_path_uses_train_config_value(self) -> None:
         """Non-default TrainConfig.drop_path must reach the model builder path."""

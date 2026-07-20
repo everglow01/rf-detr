@@ -536,6 +536,12 @@ class RFDETRLingBotSmallConfig(ModelConfig):
     layer_norm: bool = True
 
 
+class RFDETRLingBotSmallSegConfig(RFDETRLingBotSmallConfig):
+    """Instance-segmentation configuration using LingBot-Vision Small."""
+
+    segmentation_head: bool = True
+
+
 class RFDETRSegPreviewConfig(RFDETRBaseConfig):
     segmentation_head: bool = True
     out_feature_indexes: List[int] = [3, 6, 9, 12]
