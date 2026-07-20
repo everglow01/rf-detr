@@ -141,6 +141,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--lr-encoder", type=float, default=1.5e-5)
+    parser.add_argument("--lr-scheduler", choices=("step", "cosine"), default="cosine")
+    parser.add_argument("--warmup-epochs", type=float, default=2.0)
+    parser.add_argument("--lr-drop", type=int, default=40)
+    parser.add_argument("--lr-min-factor", type=float, default=0.01)
     parser.add_argument("--checkpoint-interval", type=int, default=5)
     parser.add_argument("--resume", type=Path)
     parser.add_argument("--unfreeze-encoder", action="store_true")
@@ -164,6 +168,12 @@ def main() -> None:
 
     if args.resolution <= 0 or args.resolution % 16:
         raise ValueError("--resolution must be a positive multiple of LingBot's patch size (16)")
+    if args.warmup_epochs < 0:
+        raise ValueError("--warmup-epochs must be non-negative")
+    if args.lr_drop < 0:
+        raise ValueError("--lr-drop must be non-negative")
+    if not 0 <= args.lr_min_factor <= 1:
+        raise ValueError("--lr-min-factor must be between 0 and 1")
 
     model = RFDETRLingBotSmallSeg(  # type: ignore[no-untyped-call]
         amp=not args.no_amp,
@@ -181,6 +191,10 @@ def main() -> None:
         device=args.device,
         lr=args.lr,
         lr_encoder=args.lr_encoder,
+        lr_scheduler=args.lr_scheduler,
+        warmup_epochs=args.warmup_epochs,
+        lr_drop=args.lr_drop,
+        lr_min_factor=args.lr_min_factor,
         checkpoint_interval=args.checkpoint_interval,
         resume=os.fspath(args.resume) if args.resume else None,
         use_ema=args.use_ema,
