@@ -129,6 +129,8 @@ def _build_model_context(model_config: ModelConfig) -> ModelContext:
 
     # Adapt patch-embedding projection for non-RGB channel counts
     if model_config.num_channels != 3:
+        if model_config.encoder == "lingbot_vision_small":
+            raise NotImplementedError("LingBot migration baseline supports RGB inputs only")
         import copy
 
         proj = nn_model.backbone[0].encoder.encoder.embeddings.patch_embeddings.projection

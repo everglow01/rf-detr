@@ -127,6 +127,28 @@ def test_model_weight_asset_optional_md5():
     assert asset.md5_hash is None, "MD5 hash should be optional"
 
 
+def test_model_weight_asset_optional_sha256():
+    """SHA-256 is optional and can coexist with the legacy MD5 field."""
+    digest = "a" * 64
+    asset = ModelWeightAsset(
+        filename="test-model.pth",
+        url="https://example.com/test-model.pth",
+        sha256_hash=digest,
+    )
+
+    assert asset.md5_hash is None
+    assert asset.sha256_hash == digest
+
+
+def test_lingbot_small_weight_asset_is_pinned() -> None:
+    """The LingBot backbone asset must use a fixed HF revision and verified LFS digest."""
+    asset = ModelWeights.from_filename("lingbot-vision-vit-small-127cbcec.pt")
+
+    assert asset is not None
+    assert "127cbcec380de0bcd55bdc1b1fad3819850a6514" in asset.url
+    assert asset.sha256_hash == "dca36562cb6b0b34504df6edc18fa282c5ef06fb375c3e91d5487247a1096f9d"
+
+
 def test_model_weights_inherits_from_base():
     """Test inheritance for compile-time safety contract."""
     assert issubclass(ModelWeights, ModelWeightsBase), (

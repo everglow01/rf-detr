@@ -19,6 +19,7 @@ from rfdetr.config import (
     PretrainWeightsCompatibilityWarning,
     RFDETRBaseConfig,
     RFDETRLargeConfig,
+    RFDETRLingBotSmallConfig,
     RFDETRMediumConfig,
     RFDETRNanoConfig,
     RFDETRSeg2XLargeConfig,
@@ -87,6 +88,7 @@ class TestModelConfigValidation:
             pytest.param("dinov2_windowed_small", id="windowed_small"),
             pytest.param("dinov2_windowed_base", id="windowed_base"),
             pytest.param("dinov2_registers_windowed_small", id="registers_windowed_small"),
+            pytest.param("lingbot_vision_small", id="lingbot_vision_small"),
         ],
     )
     def test_accepts_valid_encoder(self, sample_model_config, encoder: str) -> None:
@@ -178,6 +180,32 @@ class TestRFDETRBaseConfigEncoder:
         """RFDETRBaseConfig raises ValidationError for unknown encoder strings."""
         with pytest.raises(ValidationError):
             RFDETRBaseConfig(encoder="not_a_real_encoder", pretrain_weights=None)
+
+
+class TestRFDETRLingBotSmallConfig:
+    """Experimental LingBot config should expose the fixed P4-only baseline."""
+
+    def test_defaults_match_backbone_migration_baseline(self) -> None:
+        config = RFDETRLingBotSmallConfig()
+
+        assert config.encoder == "lingbot_vision_small"
+        assert config.backbone_weights is not None
+        assert config.pretrain_weights is None
+        assert config.out_feature_indexes == [11]
+        assert config.projector_scale == ["P4"]
+        assert config.patch_size == 16
+        assert config.num_windows == 1
+        assert config.resolution == 512
+        assert config.positional_encoding_size == 32
+        assert config.hidden_dim == 256
+        assert config.dec_layers == 3
+
+    def test_backbone_weights_accepts_path(self, tmp_path) -> None:
+        weights_path = tmp_path / "lingbot-small.pt"
+
+        config = RFDETRLingBotSmallConfig(backbone_weights=weights_path)
+
+        assert config.backbone_weights == os.path.realpath(os.fspath(weights_path))
 
 
 class TestSegmentationTrainConfigNumSelect:

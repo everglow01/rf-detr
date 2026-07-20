@@ -11,7 +11,13 @@ from typing import Any
 import pytest
 
 from rfdetr._namespace import _namespace_from_configs
-from rfdetr.config import RFDETRBaseConfig, RFDETRSegNanoConfig, SegmentationTrainConfig, TrainConfig
+from rfdetr.config import (
+    RFDETRBaseConfig,
+    RFDETRLingBotSmallConfig,
+    RFDETRSegNanoConfig,
+    SegmentationTrainConfig,
+    TrainConfig,
+)
 from rfdetr.models._types import BuilderArgs
 
 
@@ -86,6 +92,15 @@ class TestNamespaceFieldOwnership:
         mc = mc or RFDETRBaseConfig(num_classes=80)
         tc = tc or TrainConfig(dataset_dir="/tmp")
         return _namespace_from_configs(mc, tc)
+
+    def test_backbone_weights_forwarded_from_model_config(self) -> None:
+        """LingBot's raw backbone checkpoint path must reach the backbone builder."""
+        mc = RFDETRLingBotSmallConfig(backbone_weights="/tmp/lingbot-small.pt")
+        tc = TrainConfig(dataset_dir="/tmp")
+
+        ns = _namespace_from_configs(mc, tc)
+
+        assert ns.backbone_weights == "/tmp/lingbot-small.pt"
 
     # --- cls_loss_coef must come from TrainConfig ---
 

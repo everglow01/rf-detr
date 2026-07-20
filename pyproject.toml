@@ -59,7 +59,7 @@ train = [
     "albumentations>=1.4.24,<3.0.0",
     "roboflow",
     "rf100vl",
-    "supervision",                     # dataset/grid visualization (datasets.save_grids, datasets.synthetic)
+    "supervision>=0.29.0",              # dataset/grid visualization (datasets.save_grids, datasets.synthetic)
 ]
 onnx = [
     "onnx>=1.16.0,<2.0",
@@ -67,7 +67,7 @@ onnx = [
     "onnx_graphsurgeon",
     "onnxruntime",
     "polygraphy",
-    "supervision",                     # inference output (Detections) from export._onnx.inference
+    "supervision>=0.29.0",              # inference output (Detections) from export._onnx.inference
 ]
 trt = [
     "pycuda",
@@ -81,7 +81,7 @@ tflite = [
     "onnx>=1.20.0,<2.0; python_version >= '3.12' and python_version < '3.13'",
     "tf-keras>=2.16.0; python_version >= '3.12' and python_version < '3.13'",
     "tensorflow>=2.16.0; python_version >= '3.12' and python_version < '3.13'",
-    "supervision",                     # inference output (Detections) from export._tflite.inference
+    "supervision>=0.29.0",              # inference output (Detections) from export._tflite.inference
 ]
 kornia = [
     "kornia>=0.7,<1",              # GPU-side augmentation via on_after_batch_transfer
@@ -97,7 +97,7 @@ visual = [
     "matplotlib",
     "pandas",
     "seaborn",
-    "supervision",                     # annotators / Detections for visualize.data and dataset grids
+    "supervision>=0.29.0",              # annotators / Detections for visualize.data and dataset grids
 ]
 cli = ["jsonargparse[signatures]>=4.27.7"]
 plus = ["rfdetr_plus>=1.0.1, <2.0.0"]
@@ -194,6 +194,12 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+"src/rfdetr/models/backbone/_lingbot_vision/*.py" = [
+    "E501",  # Preserve fixed-revision upstream formatting.
+    "N803",  # Preserve upstream H/W argument names used by RoPE APIs.
+    "N806",  # Preserve upstream tensor-shape variable names.
+    "N812",  # Preserve upstream torch.nn.functional alias.
+]
 "notebooks/*.py" = ["E402"]  # cell-local imports are intentional in percent-format scripts
 "docs/cookbooks/*.ipynb" = [
     "E402",  # cell-local imports are intentional in percent-format scripts
@@ -307,6 +313,8 @@ overrides = [
     "rfdetr.models.backbone.base",
     "rfdetr.models.backbone.dinov2",
     "rfdetr.models.backbone.dinov2_with_windowed_attn",
+    "rfdetr.models.backbone.lingbot",
+    "rfdetr.models.backbone._lingbot_vision.*",
     "rfdetr.models.backbone.projector",
     "rfdetr.models.criterion",
     "rfdetr.models.heads.detection",

@@ -58,6 +58,7 @@ class BuilderArgs(Protocol):
     amp: bool
     num_classes: int
     pretrain_weights: Optional[str]
+    backbone_weights: Optional[str]
     device: str
     resolution: int
     group_detr: int

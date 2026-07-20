@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from rfdetr.platform import _IS_RFDETR_PLUS_AVAILABLE
-from rfdetr.utilities.files import _download_file, _validate_file_md5
+from rfdetr.utilities.files import _download_file, _validate_file_md5, _validate_file_sha256
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -48,6 +48,7 @@ class ModelWeightAsset:
         filename: The local filename for the model weights
         url: The download URL
         md5_hash: The expected MD5 hash for integrity validation (None if not available)
+        sha256_hash: The expected SHA-256 hash for integrity validation (None if not available)
 
     Example:
         >>> asset = ModelWeightAsset(
@@ -60,6 +61,7 @@ class ModelWeightAsset:
     filename: str
     url: str
     md5_hash: str | None = None
+    sha256_hash: str | None = None
 
 
 class ModelWeightsBase(Enum):
@@ -108,6 +110,11 @@ class ModelWeightsBase(Enum):
     def md5_hash(self) -> str | None:
         """Get the MD5 hash from the underlying ModelWeightAsset."""
         return self.value.md5_hash
+
+    @property
+    def sha256_hash(self) -> str | None:
+        """Get the SHA-256 hash from the underlying ModelWeightAsset."""
+        return self.value.sha256_hash
 
     @classmethod
     def from_filename(cls, filename: str) -> ModelWeightAsset | None:
@@ -223,6 +230,14 @@ class ModelWeights(ModelWeightsBase):
         "rf-detr-medium.pth",
         "https://storage.googleapis.com/rfdetr/medium_coco/checkpoint_best_regular.pth",
         "7223f764a87b863f02eb8d52bf0ce2ee",
+    )
+    LINGBOT_VISION_SMALL = ModelWeightAsset(
+        filename="lingbot-vision-vit-small-127cbcec.pt",
+        url=(
+            "https://huggingface.co/robbyant/lingbot-vision-vit-small/resolve/"
+            "127cbcec380de0bcd55bdc1b1fad3819850a6514/model.pt"
+        ),
+        sha256_hash="dca36562cb6b0b34504df6edc18fa282c5ef06fb375c3e91d5487247a1096f9d",
     )
     RF_DETR_KEYPOINT_PREVIEW = ModelWeightAsset(
         "rf-detr-keypoint-preview-xlarge.pth",
@@ -355,10 +370,11 @@ def download_pretrain_weights(
             if ex.name not in {"rfdetr_plus", "rfdetr_plus.assets"}:
                 raise
 
-    # Extract URL and MD5 from the asset if found
+    # Extract checksums from the asset if found
     if asset is not None:
         url = asset.url
         expected_md5 = asset.md5_hash if validate_md5 else None
+        expected_sha256 = getattr(asset, "sha256_hash", None)
     else:
         # If still not found, fall back to legacy dict-based platform models
         try:
@@ -369,21 +385,29 @@ def download_pretrain_weights(
 
             url = PLATFORM_MODELS[model_name]
             expected_md5 = None  # Platform models don't have MD5 hashes yet
+            expected_sha256 = None
         except (ImportError, KeyError):
             return
 
     # Skip download when file already exists and redownload is disabled
     if os.path.exists(pretrain_weights) and not redownload:
-        if expected_md5 and validate_md5:
-            if not _validate_file_md5(pretrain_weights, expected_md5):
+        expected_hash = expected_sha256 or expected_md5
+        if expected_hash:
+            is_valid = (
+                _validate_file_sha256(pretrain_weights, expected_sha256)
+                if expected_sha256
+                else _validate_file_md5(pretrain_weights, expected_md5)
+            )
+            algorithm = "SHA-256" if expected_sha256 else "MD5"
+            if not is_valid:
                 logger.warning(
-                    f"Existing file {pretrain_weights} has incorrect MD5 hash. "
+                    f"Existing file {pretrain_weights} has incorrect {algorithm} hash. "
                     "It may be a user-provided checkpoint or a corrupted/tampered file — "
                     "skipping re-download to avoid overwriting it. "
                     "To force a fresh download of the original weights, pass redownload=True."
                 )
             else:
-                logger.info(f"File {pretrain_weights} already exists with correct MD5 hash.")
+                logger.info(f"File {pretrain_weights} already exists with correct {algorithm} hash.")
         return
 
     logger.info(f"Downloading pretrained weights for {pretrain_weights}")
@@ -391,6 +415,7 @@ def download_pretrain_weights(
         url=url,
         filename=pretrain_weights,
         expected_md5=expected_md5,
+        expected_sha256=expected_sha256,
     )
 
 
@@ -417,14 +442,23 @@ def validate_pretrain_weights(pretrain_weights: str, strict: bool = False) -> bo
     model_name = os.path.basename(pretrain_weights)
     asset = ModelWeights.from_filename(model_name)
 
-    if asset is None or asset.md5_hash is None:
+    sha256_hash = getattr(asset, "sha256_hash", None) if asset is not None else None
+    md5_hash = asset.md5_hash if asset is not None else None
+    if asset is None or (md5_hash is None and sha256_hash is None):
         # No hash available for validation
-        logger.debug(f"No MD5 hash available for {model_name}, skipping validation")
+        logger.debug(f"No checksum available for {model_name}, skipping validation")
         return True
 
-    if not _validate_file_md5(pretrain_weights, asset.md5_hash):
+    algorithm = "SHA-256" if sha256_hash else "MD5"
+    expected_hash = sha256_hash or md5_hash
+    is_valid = (
+        _validate_file_sha256(pretrain_weights, expected_hash)
+        if sha256_hash
+        else _validate_file_md5(pretrain_weights, expected_hash)
+    )
+    if not is_valid:
         error_msg = (
-            f"MD5 hash validation failed for {pretrain_weights}. "
+            f"{algorithm} hash validation failed for {pretrain_weights}. "
             f"The file may be corrupted or tampered with. "
             f"Consider re-downloading with download_pretrain_weights('{model_name}', redownload=True)"
         )
@@ -434,5 +468,5 @@ def validate_pretrain_weights(pretrain_weights: str, strict: bool = False) -> bo
             logger.warning(error_msg)
         return False
 
-    logger.debug(f"MD5 validation passed for {pretrain_weights}")
+    logger.debug(f"{algorithm} validation passed for {pretrain_weights}")
     return True

@@ -15,6 +15,7 @@ from __future__ import annotations
 __all__ = [
     "RFDETRBase",
     "RFDETRKeypointPreview",
+    "RFDETRLingBotSmall",
     "RFDETRNano",
     "RFDETRSmall",
     "RFDETRMedium",
@@ -39,6 +40,7 @@ from rfdetr.config import (
     RFDETRKeypointPreviewConfig,
     RFDETRLargeConfig,
     RFDETRLargeDeprecatedConfig,
+    RFDETRLingBotSmallConfig,
     RFDETRMediumConfig,
     RFDETRNanoConfig,
     RFDETRSeg2XLargeConfig,
@@ -71,6 +73,13 @@ class RFDETRBase(RFDETR):
 
     size = "rfdetr-base"
     _model_config_class = RFDETRBaseConfig
+
+
+class RFDETRLingBotSmall(RFDETR):
+    """Train or run inference with the experimental LingBot-Vision Small backbone."""
+
+    size = "rfdetr-lingbot-small"
+    _model_config_class = RFDETRLingBotSmallConfig
 
 
 class RFDETRNano(RFDETR):

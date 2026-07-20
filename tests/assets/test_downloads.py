@@ -160,6 +160,22 @@ class TestDownloadPretrainWeights:
         call_kwargs = mock_file_operations["download"].call_args[1]
         assert call_kwargs["expected_md5"] is None
 
+    def test_download_sha256_asset(self, mock_file_operations):
+        """SHA-256 assets should forward their digest without affecting legacy MD5 assets."""
+        digest = "b" * 64
+        mock_asset = ModelWeightAsset(
+            filename="test-sha.pt",
+            url="https://example.com/test-sha.pt",
+            sha256_hash=digest,
+        )
+
+        with patch("rfdetr.assets.model_weights.ModelWeights.from_filename", return_value=mock_asset):
+            download_pretrain_weights("test-sha.pt")
+
+        call_kwargs = mock_file_operations["download"].call_args.kwargs
+        assert call_kwargs["expected_md5"] is None
+        assert call_kwargs["expected_sha256"] == digest
+
     def test_file_exists_no_md5_skips_download(self, mock_file_operations):
         """Test that if file exists and no MD5 validation, download is skipped."""
         mock_file_operations["exists"].return_value = True

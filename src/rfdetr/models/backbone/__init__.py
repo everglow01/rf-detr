@@ -13,6 +13,7 @@ import torch
 from torch import nn
 
 from rfdetr.models.backbone.backbone import Backbone
+from rfdetr.models.backbone.lingbot import LingBotBackbone
 from rfdetr.models.position_encoding import build_position_encoding
 from rfdetr.utilities.tensors import NestedTensor
 
@@ -62,6 +63,7 @@ def build_backbone(
     encoder,
     vit_encoder_num_layers,
     pretrained_encoder,
+    backbone_weights,
     window_block_indexes,
     drop_path,
     out_channels,
@@ -93,27 +95,40 @@ def build_backbone(
     """
     position_embedding = build_position_encoding(hidden_dim, position_embedding)
 
-    backbone = Backbone(
-        encoder,
-        pretrained_encoder,
-        window_block_indexes=window_block_indexes,
-        drop_path=drop_path,
-        out_channels=out_channels,
-        out_feature_indexes=out_feature_indexes,
-        projector_scale=projector_scale,
-        use_cls_token=use_cls_token,
-        layer_norm=layer_norm,
-        freeze_encoder=freeze_encoder,
-        target_shape=target_shape,
-        rms_norm=rms_norm,
-        backbone_lora=backbone_lora,
-        gradient_checkpointing=gradient_checkpointing,
-        load_dinov2_weights=load_dinov2_weights,
-        patch_size=patch_size,
-        num_windows=num_windows,
-        positional_encoding_size=positional_encoding_size,
-        dual_projector=dual_projector,
-    )
+    if encoder == "lingbot_vision_small":
+        backbone = LingBotBackbone(
+            backbone_weights=backbone_weights,
+            out_channels=out_channels,
+            out_feature_indexes=out_feature_indexes,
+            projector_scale=projector_scale,
+            freeze_encoder=freeze_encoder,
+            layer_norm=layer_norm,
+            rms_norm=rms_norm,
+            target_shape=target_shape,
+            gradient_checkpointing=gradient_checkpointing,
+        )
+    else:
+        backbone = Backbone(
+            encoder,
+            pretrained_encoder,
+            window_block_indexes=window_block_indexes,
+            drop_path=drop_path,
+            out_channels=out_channels,
+            out_feature_indexes=out_feature_indexes,
+            projector_scale=projector_scale,
+            use_cls_token=use_cls_token,
+            layer_norm=layer_norm,
+            freeze_encoder=freeze_encoder,
+            target_shape=target_shape,
+            rms_norm=rms_norm,
+            backbone_lora=backbone_lora,
+            gradient_checkpointing=gradient_checkpointing,
+            load_dinov2_weights=load_dinov2_weights,
+            patch_size=patch_size,
+            num_windows=num_windows,
+            positional_encoding_size=positional_encoding_size,
+            dual_projector=dual_projector,
+        )
 
     model = Joiner(backbone, position_embedding)
     return model

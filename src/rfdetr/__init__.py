@@ -54,6 +54,7 @@ from rfdetr.variants import (
     RFDETRKeypointPreview,
     RFDETRLarge,
     RFDETRLargeDeprecated,  # DEPRECATED # noqa: F401
+    RFDETRLingBotSmall,
     RFDETRMedium,
     RFDETRNano,
     RFDETRSeg2XLarge,
@@ -70,6 +71,7 @@ __all__ = [
     "ModelContext",
     "from_checkpoint",
     "RFDETRKeypointPreview",
+    "RFDETRLingBotSmall",
     "RFDETRNano",
     "RFDETRSmall",
     "RFDETRMedium",

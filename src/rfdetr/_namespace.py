@@ -22,6 +22,7 @@ from rfdetr.models._defaults import MODEL_DEFAULTS, ModelDefaults
 _MC_NAMESPACE_FIELDS = {
     "amp",
     "backbone_lora",
+    "backbone_weights",
     "bbox_reparam",
     "ca_nheads",
     "dec_layers",

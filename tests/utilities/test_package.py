@@ -71,7 +71,7 @@ class TestImportPaths:
 
     After the split:
     - ``rfdetr.inference`` exports ``ModelContext`` and ``_build_model_context``
-    - ``rfdetr.variants`` exports all 15 concrete model classes
+    - ``rfdetr.variants`` exports all 16 concrete model classes
     - ``rfdetr.detr`` re-exports both for backward compatibility
     - ``rfdetr`` (top-level) continues to export public names unchanged
     """
@@ -122,6 +122,7 @@ class TestImportPaths:
         [
             pytest.param("RFDETRBase", id="base"),
             pytest.param("RFDETRKeypointPreview", id="keypoint-preview"),
+            pytest.param("RFDETRLingBotSmall", id="lingbot-small"),
             pytest.param("RFDETRNano", id="nano"),
             pytest.param("RFDETRSmall", id="small"),
             pytest.param("RFDETRMedium", id="medium"),
@@ -161,6 +162,12 @@ class TestImportPaths:
         from rfdetr import RFDETRLarge
 
         assert RFDETRLarge is not None
+
+    def test_rfdetr_lingbot_small_importable_from_top_level(self) -> None:
+        """RFDETRLingBotSmall must be importable from rfdetr."""
+        from rfdetr import RFDETRLingBotSmall
+
+        assert RFDETRLingBotSmall is not None
 
     def test_model_context_importable_from_top_level(self) -> None:
         """ModelContext must remain importable from rfdetr (top-level package)."""

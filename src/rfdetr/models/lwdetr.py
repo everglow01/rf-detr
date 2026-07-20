@@ -768,6 +768,7 @@ def build_model(args: "BuilderArgs"):
         encoder=args.encoder,
         vit_encoder_num_layers=args.vit_encoder_num_layers,
         pretrained_encoder=args.pretrained_encoder,
+        backbone_weights=(None if args.pretrain_weights or args.resume else args.backbone_weights),
         window_block_indexes=args.window_block_indexes,
         drop_path=args.drop_path,
         out_channels=args.hidden_dim,

@@ -40,7 +40,7 @@ repos:
         args: ["--exit-non-zero-on-fix"]
         exclude: ^notebooks/.*\.py$
       - id: ruff-format
-        exclude: ^notebooks/.*\.py$
+        exclude: ^(notebooks/.*\.py$|src/rfdetr/models/backbone/_lingbot_vision/)
 
   - repo: https://github.com/PyCQA/docformatter
     rev: v1.7.8
@@ -91,7 +91,7 @@ repos:
     hooks:
       - id: insert-license
         files: \.py$
-        exclude: ^notebooks/
+        exclude: ^(notebooks/|src/rfdetr/models/backbone/_lingbot_vision/)
         args:
           - --license-filepath
           - .github/LICENSE_HEADER.txt

@@ -14,7 +14,12 @@ import torch
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic_core import PydanticUndefined
 
-EncoderName: TypeAlias = Literal["dinov2_windowed_small", "dinov2_windowed_base", "dinov2_registers_windowed_small"]
+EncoderName: TypeAlias = Literal[
+    "dinov2_windowed_small",
+    "dinov2_windowed_base",
+    "dinov2_registers_windowed_small",
+    "lingbot_vision_small",
+]
 PathLikeStr: TypeAlias = str | Path
 
 
@@ -123,6 +128,7 @@ class ModelConfig(BaseConfig):
     num_channels: int = Field(default=3, ge=1)
     num_classes: int = 90
     pretrain_weights: Optional[PathLikeStr] = None
+    backbone_weights: Optional[PathLikeStr] = None
     # torch.device values are accepted at validation time and normalized to string.
     device: str = DEVICE
     resolution: int
@@ -368,7 +374,7 @@ class ModelConfig(BaseConfig):
 
         return self
 
-    @field_validator("pretrain_weights", mode="before")
+    @field_validator("pretrain_weights", "backbone_weights", mode="before")
     @classmethod
     def expand_path(cls, v: PathLikeStr | None) -> str | None:
         """Expand and resolve the pretrain_weights path.
@@ -506,6 +512,28 @@ class RFDETRLargeConfig(ModelConfig):
     # back to TrainConfig.num_select (300), causing a postprocess mismatch.
     num_queries: int = 300
     num_select: int = 300
+
+
+class RFDETRLingBotSmallConfig(ModelConfig):
+    """Experimental P4-only RF-DETR configuration using LingBot-Vision Small."""
+
+    encoder: Literal["lingbot_vision_small"] = "lingbot_vision_small"
+    hidden_dim: int = 256
+    dec_layers: int = 3
+    sa_nheads: int = 8
+    ca_nheads: int = 16
+    dec_n_points: int = 2
+    num_windows: int = 1
+    patch_size: int = 16
+    projector_scale: List[Literal["P4",]] = ["P4"]
+    out_feature_indexes: List[int] = [11]
+    num_queries: int = 300
+    num_select: int = 300
+    positional_encoding_size: int = 32
+    resolution: int = 512
+    pretrain_weights: Optional[PathLikeStr] = None
+    backbone_weights: Optional[PathLikeStr] = "lingbot-vision-vit-small-127cbcec.pt"
+    layer_norm: bool = True
 
 
 class RFDETRSegPreviewConfig(RFDETRBaseConfig):
