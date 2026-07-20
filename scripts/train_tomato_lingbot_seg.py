@@ -16,6 +16,9 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+os.environ.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0,1")
+
 import torch
 
 from rfdetr import RFDETRLingBotSmallSeg
@@ -133,13 +136,15 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Prepare and validate data, then exit without training",
     )
-    parser.add_argument("--epochs", type=int, default=50)
-    parser.add_argument("--batch-size", type=int, default=1)
-    parser.add_argument("--grad-accum-steps", type=int, default=4)
-    parser.add_argument("--num-workers", type=int, default=2)
+    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--grad-accum-steps", type=int, default=1)
+    parser.add_argument("--num-workers", type=int, default=8)
     parser.add_argument("--resolution", type=int, default=512)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
-    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--devices", type=int, default=2)
+    parser.add_argument("--strategy", choices=("auto", "ddp"), default="ddp")
+    parser.add_argument("--lr", type=float, default=2e-4)
     parser.add_argument("--lr-encoder", type=float, default=1.5e-5)
     parser.add_argument("--lr-scheduler", choices=("step", "cosine"), default="cosine")
     parser.add_argument("--warmup-epochs", type=float, default=2.0)
@@ -168,6 +173,10 @@ def main() -> None:
 
     if args.resolution <= 0 or args.resolution % 16:
         raise ValueError("--resolution must be a positive multiple of LingBot's patch size (16)")
+    if args.devices < 1:
+        raise ValueError("--devices must be at least 1")
+    if args.device == "cpu" and args.devices > 1:
+        raise ValueError("Multi-device training requires a CUDA device")
     if args.warmup_epochs < 0:
         raise ValueError("--warmup-epochs must be non-negative")
     if args.lr_drop < 0:
@@ -189,6 +198,8 @@ def main() -> None:
         grad_accum_steps=args.grad_accum_steps,
         num_workers=args.num_workers,
         device=args.device,
+        devices=args.devices,
+        strategy=args.strategy,
         lr=args.lr,
         lr_encoder=args.lr_encoder,
         lr_scheduler=args.lr_scheduler,
