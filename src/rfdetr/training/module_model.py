@@ -430,6 +430,7 @@ class RFDETRModelModule(LightningModule):
         # One-shot guard for the notice announcing that the "auto" validation-loss policy resolved to skipping the
         # loss; emitted from on_validation_epoch_start on the first real (non-sanity) validation epoch only.
         self._logged_val_loss_skip_notice: bool = False
+        self._cldice_target_padding: Tensor | None = None
         # Validation-loss policy resolved once per validation epoch by on_validation_epoch_start and read per batch by
         # _should_compute_val_loss. None until that hook runs, so direct validation_step calls resolve it themselves.
         self._resolved_compute_val_loss: bool | None = None
@@ -847,8 +848,12 @@ class RFDETRModelModule(LightningModule):
         tc = self.train_config
         mc = self.model_config
 
+        self._cldice_target_padding = None
         if tc.multi_scale is MultiScale.PER_BATCH:
             samples, _ = batch
+            if getattr(tc, "mask_cldice_loss_coef", 0.0) > 0:
+                # Per-batch resizing changes inputs, while GT masks retain their original canvas.
+                self._cldice_target_padding = samples.mask
             scales = compute_multi_scale_scales(mc.resolution, tc.expanded_scales, mc.patch_size, mc.num_windows)
             step = self.trainer.global_step
             # Use a step-local generator so the scale choice is deterministic and DDP-consistent
@@ -919,6 +924,8 @@ class RFDETRModelModule(LightningModule):
             if self._cuda_graph_runner is not None
             else self.model(samples, targets)
         )
+        if self._cldice_target_padding is not None:
+            outputs["mask_padding"] = self._cldice_target_padding
         if self._use_manual_optimization:
             loss_dict, raw_loss, normalizer = self._compute_train_losses(outputs, targets)
             loss_for_backward = self._scale_loss_for_accumulation(raw_loss, normalizer)

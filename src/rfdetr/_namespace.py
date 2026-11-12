@@ -148,6 +148,9 @@ def _namespace_from_configs(
             "mask_ce_loss_coef": getattr(tc, "mask_ce_loss_coef", 5.0),
             "mask_dice_loss_coef": getattr(tc, "mask_dice_loss_coef", 5.0),
             "mask_point_sample_ratio": getattr(tc, "mask_point_sample_ratio", 16),
+            "mask_cldice_loss_coef": getattr(tc, "mask_cldice_loss_coef", 0.0),
+            "mask_cldice_class_ids": getattr(tc, "mask_cldice_class_ids", []),
+            "mask_cldice_iterations": getattr(tc, "mask_cldice_iterations", 10),
             # Transformations: fields requiring a default sentinel or transitional priority.
             "cls_loss_coef": cls_loss_coef,
             "resume": tc.resume or "",

@@ -17,6 +17,7 @@ from typing import Any, NamedTuple, Union
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
+from torch.utils.checkpoint import checkpoint
 
 from rfdetr.models.heads.keypoints import compute_l1_keypoint_loss
 from rfdetr.models.heads.segmentation import (
@@ -26,6 +27,7 @@ from rfdetr.models.heads.segmentation import (
 )
 from rfdetr.models.matcher import HungarianMatcher
 from rfdetr.models.math import accuracy
+from rfdetr.models.soft_cldice import soft_cldice_loss
 from rfdetr.utilities import box_ops
 from rfdetr.utilities.compiler import script_or_eager
 from rfdetr.utilities.distributed import get_world_size, is_dist_avail_and_initialized
@@ -542,6 +544,8 @@ class SetCriterion(nn.Module):
         ia_bce_loss: bool = False,
         mask_point_sample_ratio: int = 16,
         num_keypoints_per_class: list[int] | None = None,
+        mask_cldice_class_ids: list[int] | None = None,
+        mask_cldice_iterations: int = 10,
     ) -> None:
         """Create the criterion.
 
@@ -552,6 +556,8 @@ class SetCriterion(nn.Module):
             losses: list of all the losses to be applied. See get_loss for list of available losses.
             focal_alpha: alpha in Focal Loss
             group_detr: Number of groups to speed detr training. Default is 1.
+            mask_cldice_class_ids: GT classes selected for the optional final-layer topology loss.
+            mask_cldice_iterations: Number of additional soft-skeleton erosion steps.
         """
         super().__init__()
         self.num_classes = num_classes
@@ -566,6 +572,15 @@ class SetCriterion(nn.Module):
         self.ia_bce_loss = ia_bce_loss
         self.mask_point_sample_ratio = mask_point_sample_ratio
         self.num_keypoints_per_class = num_keypoints_per_class or []
+        self.mask_cldice_class_ids = tuple(mask_cldice_class_ids or [])
+        self.mask_cldice_iterations = mask_cldice_iterations
+        if weight_dict.get("loss_mask_cldice", 0.0) > 0:
+            if not self.mask_cldice_class_ids or any(
+                label < 0 or label >= num_classes for label in self.mask_cldice_class_ids
+            ):
+                raise ValueError("soft-clDice requires valid mask_cldice_class_ids")
+            if sum_group_losses:
+                raise ValueError("soft-clDice requires sum_group_losses=False (group averaging)")
         self._compile_batched_detection_losses = False
         self._compiled_batched_detection_losses: Callable[..., tuple[Tensor, Tensor, Tensor, Tensor]] | None = None
 
@@ -1007,6 +1022,98 @@ class SetCriterion(nn.Module):
         del src_masks
         return losses
 
+    def _cldice_on_image(self, logits: Tensor, masks: Tensor, padding: Tensor) -> Tensor:
+        """Align selected masks to the input canvas and exclude padding before skeletonization.
+
+        Args:
+            logits: Selected instance logits at the mask-head resolution, ``(N,Hm,Wm)``.
+            masks: Binary GT masks at this image's transformed resolution, ``(N,H,W)``.
+            padding: Boolean padding mask of the complete model input canvas, ``(Hp,Wp)``.
+
+        Returns:
+            Sum of per-instance losses on the valid image grid.
+        """
+        height, width = masks.shape[-2:]
+        aligned = F.interpolate(logits.float().unsqueeze(1), size=padding.shape, mode="bilinear", align_corners=False)[
+            :, 0, :height, :width
+        ]
+        aligned = aligned.masked_fill(padding[:height, :width], -torch.inf)
+        return soft_cldice_loss(aligned, masks, iterations=self.mask_cldice_iterations).sum()
+
+    def loss_mask_cldice(
+        self,
+        outputs: dict[str, Any],
+        targets: list[dict[str, Tensor]],
+        indices: list[tuple[Tensor, Tensor]],
+    ) -> dict[str, Tensor]:
+        """Compute topology loss only for selected GT classes using existing final-layer matches.
+
+        Each valid matched instance counts once, including Group DETR repeats. All ranks reduce the selected count,
+        including ranks with no stems. The global count is clamped BEFORE division by world size so a single stem across
+        two ranks still receives its full gradient after DDP averages the rank gradients. Skeleton activations are
+        recomputed during backward to bound their storage at full mask resolution. No randomness is used, and all
+        original losses have already run before this method is called.
+        """
+        padding = outputs.get("mask_padding")
+        if padding is None:
+            raise ValueError("soft-clDice requires mask_padding from the enabled model's training forward")
+        pred_masks = outputs["pred_masks"]
+        tensors = [pred_masks] if isinstance(pred_masks, Tensor) else list(pred_masks.values())
+        numerator = tensors[0][..., :0].sum().float()
+        for tensor in tensors[1:]:
+            numerator = numerator + tensor[..., :0].sum().float()
+        selected_count = 0
+        for batch_index, (target, (source_indices, target_indices)) in enumerate(zip(targets, indices, strict=True)):
+            # Hungarian matching returns CPU indices even when targets and masks are on CUDA.
+            source_indices = source_indices.to(device=target["labels"].device)
+            target_indices = target_indices.to(device=target["labels"].device)
+            labels = target["labels"][target_indices]
+            selected = torch.zeros_like(labels, dtype=torch.bool)
+            for class_id in self.mask_cldice_class_ids:
+                selected |= labels == class_id
+            if "valid" in target:
+                selected &= target["valid"][target_indices]
+            source_indices, target_indices = source_indices[selected], target_indices[selected]
+            if source_indices.numel() == 0:
+                continue
+            masks = target["masks"][target_indices]
+            height, width = masks.shape[-2:]
+            if height > padding.shape[-2] or width > padding.shape[-1]:
+                raise ValueError("soft-clDice GT masks exceed the model input canvas")
+            masks = masks.bool() & ~padding[batch_index, :height, :width]
+            nonempty = masks.flatten(1).any(1)
+            masks, source_indices = masks[nonempty], source_indices[nonempty]
+            selected_count += source_indices.numel()
+            if source_indices.numel() == 0:
+                continue
+            if isinstance(pred_masks, Tensor):
+                logits = pred_masks[batch_index, source_indices]
+            else:
+                logits = (
+                    torch.einsum(
+                        "chw,nc->nhw",
+                        pred_masks["spatial_features"][batch_index],
+                        pred_masks["query_features"][batch_index, source_indices],
+                    )
+                    + pred_masks["bias"]
+                )
+            if torch.is_grad_enabled() and logits.requires_grad:
+                numerator = numerator + checkpoint(
+                    self._cldice_on_image,
+                    logits,
+                    masks,
+                    padding[batch_index],
+                    use_reentrant=False,
+                    preserve_rng_state=False,
+                )
+            else:
+                numerator = numerator + self._cldice_on_image(logits, masks, padding[batch_index])
+        count = numerator.new_tensor(selected_count)
+        if is_dist_avail_and_initialized():
+            torch.distributed.all_reduce(count)
+        denominator = count.clamp(min=1) / get_world_size()
+        return {"loss_mask_cldice": numerator / denominator}
+
     def loss_keypoints(
         self,
         outputs: dict[str, Any],
@@ -1328,6 +1435,8 @@ class SetCriterion(nn.Module):
             >>> criterion.forward(outputs, targets, num_boxes=1.0)
             {}
         """
+        if self.weight_dict.get("loss_mask_cldice", 0.0) > 0 and num_boxes is not None:
+            raise ValueError("soft-clDice has a separate stem-count normalizer; num_boxes overrides are unsupported")
         group_detr = self.group_detr if self.training else 1
         outputs_without_aux = {k: v for k, v in outputs.items() if k != "aux_outputs"}
 
@@ -1427,4 +1536,6 @@ class SetCriterion(nn.Module):
                 layer_losses = self.get_loss(loss, layer_outputs, targets, indices, num_boxes, **kwargs)
                 losses.update({key + suffix: value for key, value in layer_losses.items()})
 
+        if self.weight_dict.get("loss_mask_cldice", 0.0) > 0:
+            losses.update(self.loss_mask_cldice(outputs_without_aux, targets, all_indices[0]))
         return losses

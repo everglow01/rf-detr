@@ -1885,6 +1885,9 @@ class SegmentationTrainConfig(TrainConfig):
             mask loss computation.
         mask_ce_loss_coef: Cross-entropy loss weight for mask prediction.
         mask_dice_loss_coef: Dice loss weight for mask prediction.
+        mask_cldice_loss_coef: Final-layer topology loss weight; zero completely disables it.
+        mask_cldice_class_ids: Explicit dataset classes receiving topology supervision.
+        mask_cldice_iterations: Soft-skeleton erosion iterations after the initial layer.
         cls_loss_coef: Classification loss weight. Defaults to ``1.0`` to match the
             effective pre-v1.7 value (the v1.7 TrainConfig ownership migration
             silently activated a dormant ``5.0``; this field restores the correct
@@ -1895,7 +1898,20 @@ class SegmentationTrainConfig(TrainConfig):
     mask_point_sample_ratio: int = 16
     mask_ce_loss_coef: float = 5.0
     mask_dice_loss_coef: float = 5.0
+    mask_cldice_loss_coef: float = Field(default=0.0, ge=0, allow_inf_nan=False)
+    mask_cldice_class_ids: list[int] = Field(default_factory=list)
+    mask_cldice_iterations: int = Field(default=10, ge=0)
     cls_loss_coef: float = 1.0
+
+    @model_validator(mode="after")
+    def validate_cldice_classes(self) -> "SegmentationTrainConfig":
+        """Require an explicit unique class selection when topology supervision is enabled."""
+        classes = self.mask_cldice_class_ids
+        if any(label < 0 for label in classes) or len(set(classes)) != len(classes):
+            raise ValueError("mask_cldice_class_ids must contain unique nonnegative class ids")
+        if self.mask_cldice_loss_coef > 0 and not classes:
+            raise ValueError("Enabled soft-clDice requires explicit mask_cldice_class_ids")
+        return self
 
 
 class KeypointTrainConfig(TrainConfig):

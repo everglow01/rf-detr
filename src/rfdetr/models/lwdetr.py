@@ -133,6 +133,7 @@ class LWDETR(nn.Module):
         use_grouppose_keypoints: bool = False,
         num_keypoints_per_class: list[int] | None = None,
         grouppose_keypoint_dim_downscale: int = 1,
+        mask_cldice_enabled: bool = False,
     ) -> None:
         """Initializes the model.
 
@@ -145,6 +146,7 @@ class LWDETR(nn.Module):
             aux_loss: True if auxiliary decoding losses (loss at each decoder layer) are to be used.
             group_detr: Number of groups to speed detr training. Default is 1.
             lite_refpoint_refine: TODO
+            mask_cldice_enabled: Include input padding in training loss outputs for soft-clDice.
         """
         super().__init__()
         self.num_queries = num_queries
@@ -153,6 +155,7 @@ class LWDETR(nn.Module):
         self.class_embed = nn.Linear(hidden_dim, num_classes)
         self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
         self.segmentation_head = segmentation_head
+        self.mask_cldice_enabled = mask_cldice_enabled
         query_dim = 4
         self.refpoint_embed = nn.Embedding(num_queries * group_detr, query_dim)
         self.query_feat = nn.Embedding(num_queries * group_detr, hidden_dim)
@@ -659,6 +662,18 @@ class LWDETR(nn.Module):
                 if keypoints_enc is not None:
                     out["pred_keypoints"] = keypoints_enc
 
+        if self.mask_cldice_enabled and (self.training or all_layer_masks):
+            # Preserve the actual input canvas, including backbone block-size padding.
+            out["mask_padding"] = (
+                samples.mask
+                if samples.mask is not None
+                else torch.zeros(
+                    samples.tensors.shape[0],
+                    *samples.tensors.shape[-2:],
+                    dtype=torch.bool,
+                    device=samples.tensors.device,
+                )
+            )
         return out
 
     def forward_export(self, tensors: Tensor) -> tuple[Tensor, ...]:
@@ -915,6 +930,7 @@ def build_model(args: "BuilderArgs") -> LWDETR | tuple[Any, None, None]:
         use_grouppose_keypoints=getattr(args, "use_grouppose_keypoints", False),
         num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
         grouppose_keypoint_dim_downscale=getattr(args, "grouppose_keypoint_dim_downscale", 1),
+        mask_cldice_enabled=getattr(args, "mask_cldice_loss_coef", 0.0) > 0,
     )
     return model
 
@@ -943,6 +959,16 @@ def build_criterion_and_postprocessors(args: "BuilderArgs") -> tuple[SetCriterio
             aux_weight_dict.update({k + "_enc": v for k, v in weight_dict.items()})
         weight_dict.update(aux_weight_dict)
 
+    cldice_coef = getattr(args, "mask_cldice_loss_coef", 0.0)
+    if cldice_coef > 0:
+        if not args.segmentation_head or has_keypoints:
+            raise ValueError("soft-clDice currently requires segmentation without GroupPose keypoints")
+        class_ids = getattr(args, "mask_cldice_class_ids", [])
+        if not class_ids or any(label < 0 or label >= args.num_classes for label in class_ids):
+            raise ValueError("mask_cldice_class_ids must select existing dataset classes")
+        # Register AFTER auxiliary weight expansion: only the final decoder gets this term.
+        weight_dict["loss_mask_cldice"] = cldice_coef
+
     losses = ["labels", "boxes", "cardinality"]
     if args.segmentation_head:
         losses.append("masks")
@@ -963,6 +989,8 @@ def build_criterion_and_postprocessors(args: "BuilderArgs") -> tuple[SetCriterio
             use_position_supervised_loss=args.use_position_supervised_loss,
             ia_bce_loss=args.ia_bce_loss,
             mask_point_sample_ratio=args.mask_point_sample_ratio,
+            mask_cldice_class_ids=getattr(args, "mask_cldice_class_ids", []),
+            mask_cldice_iterations=getattr(args, "mask_cldice_iterations", 10),
             num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
         )
     else:
