@@ -233,3 +233,8 @@ docs/cookbooks/export_apple/
 
 # MacOS files
 .DS_Store
+.data
+
+# Keep large experiment snapshots/figures local; retain their manifests and reports.
+/reports/**/*.tar.gz
+/reports/**/*.png

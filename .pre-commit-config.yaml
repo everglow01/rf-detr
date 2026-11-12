@@ -10,6 +10,7 @@ repos:
     rev: v6.0.0
     hooks:
       - id: trailing-whitespace
+        exclude: ^reports/
       - id: check-yaml
         args: ["--unsafe"]
       - id: check-executables-have-shebangs
@@ -22,14 +23,17 @@ repos:
       - id: detect-private-key
       - id: pretty-format-json
         args: ["--autofix", "--no-sort-keys", "--indent=4"]
-        exclude: \.ipynb$
+        exclude: (\.ipynb$|^reports/)
       - id: end-of-file-fixer
+        exclude: ^reports/
       - id: mixed-line-ending
+        exclude: ^reports/
 
   - repo: https://github.com/JoC0de/pre-commit-prettier
     rev: v3.9.10 # using tag; previously pinned SHA when tags were not persistent
     hooks:
       - id: prettier
+        exclude: ^reports/
         files: \.(ya?ml|toml)$
         # https://prettier.io/docs/en/options.html#print-width
         args: ["--print-width=120"]
@@ -39,14 +43,15 @@ repos:
     hooks:
       - id: ruff-check
         args: ["--exit-non-zero-on-fix"]
-        exclude: ^notebooks/.*\.py$
+        exclude: ^(notebooks/.*\.py$|reports/)
       - id: ruff-format
-        exclude: ^notebooks/.*\.py$
+        exclude: ^(notebooks/.*\.py$|reports/)
 
   - repo: https://github.com/PyCQA/docformatter
     rev: v1.7.8
     hooks:
       - id: docformatter
+        exclude: ^reports/
         # untokenize 0.1.1 cannot build on Python 3.14 (removed ast.Constant.s).
         language_version: python3.11
         additional_dependencies: [tomli]
@@ -56,7 +61,7 @@ repos:
     rev: 1.0.0
     hooks:
       - id: mdformat
-        exclude: ^docs/reference/
+        exclude: ^(docs/reference/|reports/)
         additional_dependencies:
           - "mdformat-mkdocs[recommended]>=2.1.0"
           - "mdformat-ruff"
@@ -66,6 +71,7 @@ repos:
     rev: v2.4.3
     hooks:
       - id: codespell
+        exclude: ^reports/
         # args: [--write-changes]
         additional_dependencies:
           - tomli
@@ -82,7 +88,7 @@ repos:
     hooks:
       - id: insert-license
         files: \.py$
-        exclude: ^(notebooks|docs)/
+        exclude: ^(notebooks|docs|reports)/
         args:
           - --license-filepath
           - .github/LICENSE_HEADER.txt
