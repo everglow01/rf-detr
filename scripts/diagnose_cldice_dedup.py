@@ -210,8 +210,6 @@ def compare_gradients(module: Any, dataset: CocoDetection, other: Any, args: Any
             matched["indices"] = indices
             return new_loss(outputs, truth, indices)
 
-        if parity:
-            torch.use_deterministic_algorithms(True)
         torch.manual_seed(7000 + bi)
         with patch("rfdetr.models.criterion._soft_skeleton", wraps=_soft_skeleton) as spy:
             with patch.object(module.criterion, "loss_mask_cldice", side_effect=capture):
@@ -235,16 +233,31 @@ def compare_gradients(module: Any, dataset: CocoDetection, other: Any, args: Any
             ).sum()
             boundary_difference = None
             if parity:
+                # Use detached copies of the actual prediction tensors. Each checkpoint
+                # keeps one determinism setting for its entire forward/backward lifetime.
+                torch.use_deterministic_algorithms(True)
                 pred = outputs["pred_masks"]
-                boundary = [pred] if isinstance(pred, Tensor) else list(pred.values())
-                boundary_first = cpu_grads(current, boundary, retain_graph=True)
-                boundary_second = cpu_grads(alternate, boundary, retain_graph=True)
+                detached = (
+                    pred.detach().requires_grad_()
+                    if isinstance(pred, Tensor)
+                    else {k: v.detach().requires_grad_() for k, v in pred.items()}
+                )
+                boundary = [detached] if isinstance(detached, Tensor) else list(detached.values())
+                boundary_outputs = dict(pred_masks=detached, mask_padding=outputs["mask_padding"])
+                with torch.autocast("cuda", dtype=torch.bfloat16):
+                    left_loss = 0.1 * new_loss(boundary_outputs, targets, matched["indices"])["loss_mask_cldice"]
+                    right_loss = (
+                        0.1 * other.loss_mask_cldice(boundary_outputs, targets, matched["indices"])["loss_mask_cldice"]
+                    )
+                calls_before = spy.call_count
+                boundary_first = cpu_grads(left_loss, boundary, retain_graph=False)
+                boundary_second = cpu_grads(right_loss, boundary, retain_graph=False)
                 boundary_difference = gradient_difference(boundary_first, boundary_second)
+                torch.testing.assert_close(left_loss, right_loss, atol=0, rtol=0)
                 for left, right in zip(boundary_first, boundary_second, strict=True):
                     if left is not None:
                         torch.testing.assert_close(left, right, atol=0, rtol=0)
-                # The adapter's complete input Jacobian is now checked. CUDA grid_sample
-                # in the unchanged shared network has no deterministic backward kernel.
+                assert spy.call_count == calls_before, "GT skeleton was recomputed during boundary backward"
                 torch.use_deterministic_algorithms(False)
             original_grad = cpu_grads(native, params, retain_graph=True) if not parity else None
             first_grad = cpu_grads(current, params, retain_graph=True)
