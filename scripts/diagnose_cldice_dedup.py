@@ -85,9 +85,7 @@ def cpu_grads(loss: Tensor, params: list[Tensor], *, retain_graph: bool) -> list
     return [value.detach().float().cpu() if value is not None else None for value in values]
 
 
-def gradient_difference(
-    first: list[Tensor | None], second: list[Tensor | None], *, require_close: bool
-) -> dict[str, Any]:
+def gradient_difference(first: list[Tensor | None], second: list[Tensor | None]) -> dict[str, Any]:
     """Check every shared parameter, not just the norm of the full vector."""
     error, scale, maximum, exact = 0.0, 0.0, 0.0, True
     for left, right in zip(first, second, strict=True):
@@ -100,13 +98,50 @@ def gradient_difference(
         error += float(difference.square().sum())
         scale += float(left.square().sum())
         exact &= torch.equal(left, right)
-        if require_close:
-            torch.testing.assert_close(right, left, atol=1e-7, rtol=1e-5)
     return dict(
         max_absolute_error=maximum,
         relative_l2_error=math.sqrt(error / max(scale, 1e-30)),
         bitwise_equal=exact,
         **gradient_relation(first, second),
+    )
+
+
+def verify_gradient_parity(
+    first: list[Tensor | None],
+    first_repeat: list[Tensor | None],
+    second: list[Tensor | None],
+    second_repeat: list[Tensor | None],
+) -> dict[str, Any]:
+    """Bound cross-path error by repeated-backward controls and a strict global cap.
+
+    BF16 shared-backbone backward can vary between identical calls. Require each parameter's maximum error to stay
+    within four times its observed self-repeat noise (absolute floor 1e-7), AND global relative L2 error <=5e-5. A noisy
+    control never waives the global cap. Scalar losses retain the original tight check.
+    """
+    cross = gradient_difference(first, second)
+    control_first = gradient_difference(first, first_repeat)
+    control_second = gradient_difference(second, second_repeat)
+    failures = []
+    for index, (left, left_repeat, right, right_repeat) in enumerate(
+        zip(first, first_repeat, second, second_repeat, strict=True)
+    ):
+        if left is None:
+            continue
+        assert left_repeat is not None and right is not None and right_repeat is not None
+        noise = max(float((left - left_repeat).abs().max()), float((right - right_repeat).abs().max()))
+        error = float((left - right).abs().max())
+        allowed = max(1e-7, 4 * noise)
+        if error > allowed:
+            failures.append(dict(parameter_index=index, maximum_error=error, observed_noise=noise, allowed=allowed))
+    return dict(
+        passed=not failures and cross["relative_l2_error"] <= 5e-5,
+        relative_l2_limit=5e-5,
+        noise_multiplier=4,
+        absolute_floor=1e-7,
+        cross=cross,
+        current_repeat=control_first,
+        alternate_repeat=control_second,
+        out_of_bound_parameters=failures,
     )
 
 
@@ -197,11 +232,13 @@ def compare_gradients(module: Any, dataset: CocoDetection, other: Any, args: Any
             ).sum()
             original_grad = cpu_grads(native, params, retain_graph=True) if not parity else None
             first_grad = cpu_grads(current, params, retain_graph=True)
-            second_grad = cpu_grads(alternate, params, retain_graph=False)
+            first_repeat = cpu_grads(current, params, retain_graph=True) if parity else None
+            second_grad = cpu_grads(alternate, params, retain_graph=parity)
+            second_repeat = cpu_grads(alternate, params, retain_graph=False) if parity else None
             assert spy.call_count == calls_before, "GT skeleton was recomputed during backward"
             assert torch.equal(rng_before, torch.random.get_rng_state())
             assert torch.equal(cuda_rng_before, torch.cuda.get_rng_state())
-        difference = gradient_difference(first_grad, second_grad, require_close=parity)
+        difference = gradient_difference(first_grad, second_grad)
         if parity:
             torch.testing.assert_close(current, alternate, atol=1e-7, rtol=1e-6)
         row = dict(
@@ -212,6 +249,9 @@ def compare_gradients(module: Any, dataset: CocoDetection, other: Any, args: Any
             unique_gt_skeletons=unique_gt,
             gradient=difference,
         )
+        if parity:
+            assert first_repeat is not None and second_repeat is not None
+            row["parity_control"] = verify_gradient_parity(first_grad, first_repeat, second_grad, second_repeat)
         if original_grad is not None:
             row["groups"] = {
                 name: dict(
@@ -223,6 +263,8 @@ def compare_gradients(module: Any, dataset: CocoDetection, other: Any, args: Any
             prediction_rows.extend(prediction_skeleton_mass(outputs, targets, matched["indices"]))
         rows.append(row)
         write_json(args.output / f"{label}.json", rows)
+        if parity:
+            assert row["parity_control"]["passed"], json.dumps(row["parity_control"])
         print(
             json.dumps(
                 dict(
@@ -235,7 +277,18 @@ def compare_gradients(module: Any, dataset: CocoDetection, other: Any, args: Any
             ),
             flush=True,
         )
-        del outputs, losses, native, current, alternate, first_grad, second_grad, original_grad
+        del (
+            outputs,
+            losses,
+            native,
+            current,
+            alternate,
+            first_grad,
+            second_grad,
+            original_grad,
+            first_repeat,
+            second_repeat,
+        )
     if not parity:
         write_json(args.output / "prediction_skeleton_mass.json", prediction_rows)
 
@@ -372,6 +425,10 @@ def main() -> None:
         Path(criterion_module.__file__),
         Path(criterion_module.__file__).with_name("soft_cldice.py"),
     ]
+    assert tc.dataset_dir is not None
+    paths.extend(Path(tc.dataset_dir) / split / "_annotations.coco.json" for split in ("train", "valid"))
+    paths.extend(args.coverage_records / f"coverage_seed{seed}.json" for seed in (42, 43, 44))
+    paths.append(Path(__file__).with_name("diagnose_tomato_e1.py"))
     write_json(
         args.output / "provenance.json",
         dict(
@@ -381,6 +438,7 @@ def main() -> None:
             sha256={str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths},
             bf16=True,
             coefficient=0.1,
+            iterations={"legacy": 10, "deduplicated": [10, 25], "prediction_mass_reference": [50, 75]},
             class_ids=[1],
             group_detr=mc.group_detr,
             optimizer_steps=0,
@@ -388,6 +446,7 @@ def main() -> None:
     )
     module = RFDETRModelModule(mc, tc, load_encoder_weights=False).cuda().train()
     before = parameter_hash(module.model)
+    write_json(args.output / "parameter_names.json", [n for n, p in module.model.named_parameters() if p.requires_grad])
     data = RFDETRDataModule(mc, tc)
     data.setup("fit")
     dataset = data._dataset_train
