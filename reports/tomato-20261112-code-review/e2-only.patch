@@ -1,0 +1,960 @@
+diff --git a/configs/tomato/seg_small_query_point.yaml b/configs/tomato/seg_small_query_point.yaml
+new file mode 100644
+--- /dev/null
++++ b/configs/tomato/seg_small_query_point.yaml
+@@ -0,0 +1,71 @@
++# E2: E0 plus final-query point MLP, visible matched stems only; clDice disabled.
++# Launch on two GPUs with torchrun; choose a new output_dir for a separate repeat.
++seed_everything: 42
++model:
++  load_encoder_weights: false
++  model_config:
++    class_path: rfdetr.config.RFDETRSegSmallConfig
++    init_args:
++      num_classes: 3
++      resolution: 384
++      device: cuda
++      pretrain_weights: checkpoint/pretrained/rf-detr-seg-small.pt
++      segmentation_head: true
++      use_grouppose_keypoints: false
++      query_point_head: true
++      query_point_class_ids: [1]
++      freeze_encoder: false
++      compile: false
++      cuda_graphs: false
++      gradient_checkpointing: false
++      fused_optimizer: true
++  train_config:
++    class_path: rfdetr.config.SegmentationTrainConfig
++    init_args:
++      dataset_file: roboflow
++      dataset_dir: data/0/TOMATO.v7i.rfdetr-keypoints-v1
++      output_dir: output/output1/e2-seg-small-query-mlp-v1-seed42/training
++      query_point_loss_coef: 1.0
++      mask_cldice_loss_coef: 0.0
++      epochs: 100
++      batch_size: 8
++      grad_accum_steps: 1
++      devices: 2
++      strategy: ddp
++      num_nodes: 1
++      accelerator: gpu
++      amp_dtype: bf16
++      seed: 42
++      num_workers: 4
++      lr: 0.0001
++      lr_encoder: 0.00015
++      weight_decay: 0.0001
++      lr_vit_layer_decay: 0.8
++      lr_component_decay: 0.7
++      optimizer: adamw
++      lr_scheduler: step
++      lr_scheduler_kwargs:
++        lr_drop: 70
++      warmup_epochs: 0
++      clip_max_norm: 0.1
++      augmentation_backend: TV
++      multi_scale: PER_BATCH
++      expanded_scales: true
++      scale_jitter: true
++      use_ema: true
++      ema_decay: 0.993
++      ema_tau: 100
++      eval_interval: 1
++      eval_base_model: false
++      eval_masks_head_resolution: false
++      eval_backend: vernier
++      eval_max_dets: 500
++      log_per_class_metrics: true
++      compute_val_loss: true
++      best_model_metric: map
++      early_stopping: false
++      num_sanity_val_steps: 0
++      run_test: false
++      checkpoint_interval: 20
++      tensorboard: true
++      progress_bar: null
+diff --git a/src/rfdetr/config.py b/src/rfdetr/config.py
+--- a/src/rfdetr/config.py
++++ b/src/rfdetr/config.py
+@@ -731,6 +731,8 @@
+     ia_bce_loss: bool = True
+     segmentation_head: bool = False
+     use_grouppose_keypoints: bool = False
++    query_point_head: bool = False
++    query_point_class_ids: list[int] = Field(default_factory=list)
+     keypoint_cross_attn: bool = True
+     inter_instance_kp_attn: bool = False
+     grouppose_keypoint_dim_downscale: int = 1
+@@ -751,6 +753,17 @@
+             "without inspecting ``pretrain_weights``."
+         ),
+     )
++
++    @model_validator(mode="after")
++    def validate_query_point_head(self) -> "ModelConfig":
++        """Keep the coordinate-only query head independent of GroupPose."""
++        if self.query_point_head:
++            if not self.segmentation_head or self.use_grouppose_keypoints or self.dec_layers < 1:
++                raise ValueError("query_point_head requires segmentation with decoder layers and no GroupPose")
++            classes = self.query_point_class_ids
++            if not classes or len(set(classes)) != len(classes) or any(c < 0 or c >= self.num_classes for c in classes):
++                raise ValueError("query_point_class_ids must select unique existing dataset classes")
++        return self
+ 
+     @model_validator(mode="after")
+     def _sync_pe_with_resolution(self) -> "ModelConfig":
+@@ -1885,6 +1898,7 @@
+             mask loss computation.
+         mask_ce_loss_coef: Cross-entropy loss weight for mask prediction.
+         mask_dice_loss_coef: Dice loss weight for mask prediction.
++        query_point_loss_coef: Final-layer coordinate L1 weight when ModelConfig.query_point_head is enabled.
+         mask_cldice_loss_coef: Final-layer topology loss weight; zero completely disables it.
+         mask_cldice_class_ids: Explicit dataset classes receiving topology supervision.
+         mask_cldice_iterations: Soft-skeleton erosion iterations after the initial layer.
+@@ -1898,6 +1912,7 @@
+     mask_point_sample_ratio: int = 16
+     mask_ce_loss_coef: float = 5.0
+     mask_dice_loss_coef: float = 5.0
++    query_point_loss_coef: float = Field(default=1.0, ge=0, allow_inf_nan=False)
+     mask_cldice_loss_coef: float = Field(default=0.0, ge=0, allow_inf_nan=False)
+     mask_cldice_class_ids: list[int] = Field(default_factory=list)
+     mask_cldice_iterations: int = Field(default=10, ge=0)
+diff --git a/src/rfdetr/inference.py b/src/rfdetr/inference.py
+--- a/src/rfdetr/inference.py
++++ b/src/rfdetr/inference.py
+@@ -460,6 +460,7 @@
+     # child processes in notebook environments.
+     postprocess = PostProcess(
+         num_select=args.num_select,
++        query_point_class_ids=getattr(args, "query_point_class_ids", []),
+         num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
+         # Older detection-only namespaces may omit keypoint postprocess knobs; keep the ModelConfig default.
+         trace_alpha=getattr(args, "postprocess_trace_alpha", 0.2),
+diff --git a/src/rfdetr/_namespace.py b/src/rfdetr/_namespace.py
+--- a/src/rfdetr/_namespace.py
++++ b/src/rfdetr/_namespace.py
+@@ -48,6 +48,8 @@
+     "sa_nheads",
+     "segmentation_head",
+     "use_grouppose_keypoints",
++    "query_point_head",
++    "query_point_class_ids",
+     "keypoint_cross_attn",
+     "inter_instance_kp_attn",
+     "grouppose_keypoint_dim_downscale",
+@@ -148,6 +150,7 @@
+             "mask_ce_loss_coef": getattr(tc, "mask_ce_loss_coef", 5.0),
+             "mask_dice_loss_coef": getattr(tc, "mask_dice_loss_coef", 5.0),
+             "mask_point_sample_ratio": getattr(tc, "mask_point_sample_ratio", 16),
++            "query_point_loss_coef": getattr(tc, "query_point_loss_coef", 1.0),
+             "mask_cldice_loss_coef": getattr(tc, "mask_cldice_loss_coef", 0.0),
+             "mask_cldice_class_ids": getattr(tc, "mask_cldice_class_ids", []),
+             "mask_cldice_iterations": getattr(tc, "mask_cldice_iterations", 10),
+diff --git a/src/rfdetr/datasets/coco.py b/src/rfdetr/datasets/coco.py
+--- a/src/rfdetr/datasets/coco.py
++++ b/src/rfdetr/datasets/coco.py
+@@ -1517,8 +1517,10 @@
+     # Model-dependent pipeline options are mandatory for direct builder calls.
+     square_resize_div_64 = args.square_resize_div_64
+     include_masks = args.segmentation_head
+-    include_keypoints = has_keypoints
++    include_keypoints = has_keypoints or getattr(args, "query_point_head", False)
+     num_keypoints_per_class = getattr(args, "num_keypoints_per_class", [])
++    if getattr(args, "query_point_head", False):
++        num_keypoints_per_class = [int(i in args.query_point_class_ids) for i in range(args.num_classes)]
+     aug_config = getattr(args, "aug_config", None)
+     scale_jitter = getattr(args, "scale_jitter", True)
+     keypoint_flip_pairs = resolve_keypoint_flip_pairs(args, include_keypoints=include_keypoints)
+@@ -1653,8 +1655,10 @@
+     patch_size = args.patch_size
+     num_windows = args.num_windows
+     # Roboflow detection exports omit keypoint schema/flip-pair fields; missing values mean detection-only.
+-    include_keypoints = getattr(args, "use_grouppose_keypoints", False)
++    include_keypoints = getattr(args, "use_grouppose_keypoints", False) or getattr(args, "query_point_head", False)
+     num_keypoints_per_class = getattr(args, "num_keypoints_per_class", [])
++    if getattr(args, "query_point_head", False):
++        num_keypoints_per_class = [int(i in args.query_point_class_ids) for i in range(args.num_classes)]
+     keypoint_flip_pairs = resolve_keypoint_flip_pairs(args, include_keypoints=include_keypoints)
+     aug_config = getattr(args, "aug_config", None)
+     scale_jitter = getattr(args, "scale_jitter", True)
+diff --git a/src/rfdetr/datasets/_aug_utils.py b/src/rfdetr/datasets/_aug_utils.py
+--- a/src/rfdetr/datasets/_aug_utils.py
++++ b/src/rfdetr/datasets/_aug_utils.py
+@@ -46,6 +46,10 @@
+         ``None`` for detection-only pipelines, otherwise the resolved flip-pair
+         list (possibly empty).
+     """
++    # A single picking point has no left/right slots to swap. Keep the detection
++    # augmentation recipe; geometric transforms still update its xy/visibility.
++    if getattr(args, "query_point_head", False):
++        return None
+     return (getattr(args, "keypoint_flip_pairs", []) or []) if include_keypoints else None
+ 
+ 
+diff --git a/src/rfdetr/models/criterion.py b/src/rfdetr/models/criterion.py
+--- a/src/rfdetr/models/criterion.py
++++ b/src/rfdetr/models/criterion.py
+@@ -546,6 +546,7 @@
+         num_keypoints_per_class: list[int] | None = None,
+         mask_cldice_class_ids: list[int] | None = None,
+         mask_cldice_iterations: int = 10,
++        query_point_class_ids: list[int] | None = None,
+     ) -> None:
+         """Create the criterion.
+ 
+@@ -558,6 +559,7 @@
+             group_detr: Number of groups to speed detr training. Default is 1.
+             mask_cldice_class_ids: GT classes selected for the optional final-layer topology loss.
+             mask_cldice_iterations: Number of additional soft-skeleton erosion steps.
++            query_point_class_ids: GT classes receiving one visible point coordinate loss per final match.
+         """
+         super().__init__()
+         self.num_classes = num_classes
+@@ -572,6 +574,12 @@
+         self.ia_bce_loss = ia_bce_loss
+         self.mask_point_sample_ratio = mask_point_sample_ratio
+         self.num_keypoints_per_class = num_keypoints_per_class or []
++        self.query_point_class_ids = tuple(query_point_class_ids or [])
++        if "loss_query_point" in weight_dict:
++            if not self.query_point_class_ids or any(c < 0 or c >= num_classes for c in self.query_point_class_ids):
++                raise ValueError("query_point_head requires valid query_point_class_ids")
++            if sum_group_losses:
++                raise ValueError("query_point_head requires sum_group_losses=False (group averaging)")
+         self.mask_cldice_class_ids = tuple(mask_cldice_class_ids or [])
+         self.mask_cldice_iterations = mask_cldice_iterations
+         if weight_dict.get("loss_mask_cldice", 0.0) > 0:
+@@ -1039,6 +1047,42 @@
+         ]
+         aligned = aligned.masked_fill(padding[:height, :width], -torch.inf)
+         return soft_cldice_loss(aligned, masks, iterations=self.mask_cldice_iterations).sum()
++
++    def loss_query_point(
++        self,
++        outputs: dict[str, Any],
++        targets: list[dict[str, Tensor]],
++        indices: list[tuple[Tensor, Tensor]],
++    ) -> dict[str, Tensor]:
++        """Average normalized xy L1 over visible selected-class final-layer matches.
++
++        Count Group DETR repeats explicitly. Reduce counts on every DDP rank and clamp
++        before world-size division, so an empty rank does not dilute the other rank.
++        Empty batches still connect the entire point head to the shared feature graph.
++        """
++        predictions = outputs["pred_pick_points"]
++        numerator = predictions[..., :0].sum().float()
++        count = predictions.new_zeros((), dtype=torch.float32)
++        for batch_index, (target, (source_indices, target_indices)) in enumerate(zip(targets, indices, strict=True)):
++            if "keypoints" not in target or target["keypoints"].shape[1:] != (1, 3):
++                raise ValueError("query_point_head requires keypoints with shape (N, 1, 3)")
++            device = target["labels"].device
++            source_indices, target_indices = source_indices.to(device), target_indices.to(device)
++            labels = target["labels"][target_indices]
++            points = target["keypoints"][target_indices, 0]
++            selected = torch.zeros_like(labels, dtype=torch.bool)
++            for class_id in self.query_point_class_ids:
++                selected |= labels == class_id
++            selected &= points[:, 2] > 0
++            if "valid" in target:
++                selected &= target["valid"][target_indices]
++            pred = predictions[batch_index, source_indices[selected]].float()
++            truth = points[selected, :2].float()
++            numerator = numerator + F.l1_loss(pred, truth, reduction="none").mean(-1).sum()
++            count = count + selected.sum()
++        if is_dist_avail_and_initialized():
++            torch.distributed.all_reduce(count)
++        return {"loss_query_point": numerator / (count.clamp(min=1) / get_world_size())}
+ 
+     def loss_mask_cldice(
+         self,
+@@ -1433,6 +1477,8 @@
+             >>> criterion.forward(outputs, targets, num_boxes=1.0)
+             {}
+         """
++        if "loss_query_point" in self.weight_dict and num_boxes is not None:
++            raise ValueError("query-point loss has a separate count normalizer; num_boxes overrides are unsupported")
+         if self.weight_dict.get("loss_mask_cldice", 0.0) > 0 and num_boxes is not None:
+             raise ValueError("soft-clDice has a separate stem-count normalizer; num_boxes overrides are unsupported")
+         group_detr = self.group_detr if self.training else 1
+@@ -1536,4 +1582,6 @@
+ 
+         if self.weight_dict.get("loss_mask_cldice", 0.0) > 0:
+             losses.update(self.loss_mask_cldice(outputs_without_aux, targets, all_indices[0]))
++        if "loss_query_point" in self.weight_dict:
++            losses.update(self.loss_query_point(outputs_without_aux, targets, all_indices[0]))
+         return losses
+diff --git a/src/rfdetr/models/lwdetr.py b/src/rfdetr/models/lwdetr.py
+--- a/src/rfdetr/models/lwdetr.py
++++ b/src/rfdetr/models/lwdetr.py
+@@ -134,6 +134,7 @@
+         num_keypoints_per_class: list[int] | None = None,
+         grouppose_keypoint_dim_downscale: int = 1,
+         mask_cldice_enabled: bool = False,
++        query_point_head: bool = False,
+     ) -> None:
+         """Initializes the model.
+ 
+@@ -147,6 +148,7 @@
+             group_detr: Number of groups to speed detr training. Default is 1.
+             lite_refpoint_refine: TODO
+             mask_cldice_enabled: Include input padding in training loss outputs for soft-clDice.
++            query_point_head: Attach a coordinate-only MLP to final decoder queries, independently of GroupPose.
+         """
+         super().__init__()
+         self.num_queries = num_queries
+@@ -230,6 +232,14 @@
+                     [copy.deepcopy(self.keypoint_embed) for _ in range(group_detr)]
+                 )
+ 
++        self.query_point_embed: MLP | None = None
++        if query_point_head:
++            if segmentation_head is None or use_grouppose_keypoints:
++                raise ValueError("query_point_head requires segmentation without GroupPose")
++            # Head initialization must not advance the shared model/training RNG stream.
++            with torch.random.fork_rng(devices=[]):
++                self.query_point_embed = MLP(hidden_dim, hidden_dim, 2, 3)
++
+         self._export = False
+ 
+     def reinitialize_detection_head(self, num_classes: int) -> None:
+@@ -353,6 +363,8 @@
+                 _reset_keypoint_gaussian_output_rows(keypoint_embed)
+ 
+     def export(self) -> None:
++        if self.query_point_embed is not None:
++            raise NotImplementedError("Export of the query-point head is not supported yet")
+         self._export = True
+         self._forward_origin = self.forward
+         self.forward = self.forward_export  # type: ignore[method-assign,assignment]
+@@ -603,6 +615,8 @@
+             out = {"pred_logits": outputs_class[-1], "pred_boxes": outputs_coord[-1]}
+             if self.segmentation_head is not None:
+                 out["pred_masks"] = outputs_masks[-1]
++            if self.query_point_embed is not None:
++                out["pred_pick_points"] = self.query_point_embed(hs[-1]).sigmoid()
+             if outputs_keypoints is not None:
+                 out["pred_keypoints"] = outputs_keypoints[-1]
+             if self.aux_loss:
+@@ -662,6 +676,9 @@
+                 if keypoints_enc is not None:
+                     out["pred_keypoints"] = keypoints_enc
+ 
++        if self.query_point_embed is not None and hs is None:
++            raise ValueError("query_point_head requires a final decoder query layer")
++
+         if self.mask_cldice_enabled and (self.training or all_layer_masks):
+             # Preserve the actual input canvas, including backbone block-size padding.
+             out["mask_padding"] = (
+@@ -686,6 +703,8 @@
+             ``(boxes, logits)`` for detection, ``(boxes, logits, masks)`` for segmentation, or
+             ``(boxes, logits, keypoints)`` for keypoint models.
+         """
++        if self.query_point_embed is not None:
++            raise NotImplementedError("Export of the query-point head is not supported yet")
+         srcs, _, poss, cross_attn_srcs = self.backbone(tensors)
+         # only use one group in inference
+         refpoint_embed_weight = self.refpoint_embed.weight[: self.num_queries]
+@@ -931,6 +950,7 @@
+         num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
+         grouppose_keypoint_dim_downscale=getattr(args, "grouppose_keypoint_dim_downscale", 1),
+         mask_cldice_enabled=getattr(args, "mask_cldice_loss_coef", 0.0) > 0,
++        query_point_head=getattr(args, "query_point_head", False),
+     )
+     return model
+ 
+@@ -959,6 +979,12 @@
+             aux_weight_dict.update({k + "_enc": v for k, v in weight_dict.items()})
+         weight_dict.update(aux_weight_dict)
+ 
++    if getattr(args, "query_point_head", False):
++        if not args.segmentation_head or has_keypoints:
++            raise ValueError("query_point_head requires segmentation without GroupPose")
++        # Keep the original matcher and all auxiliary/encoder weights unchanged.
++        weight_dict["loss_query_point"] = getattr(args, "query_point_loss_coef", 1.0)
++
+     cldice_coef = getattr(args, "mask_cldice_loss_coef", 0.0)
+     if cldice_coef > 0:
+         if not args.segmentation_head or has_keypoints:
+@@ -991,6 +1017,7 @@
+             mask_point_sample_ratio=args.mask_point_sample_ratio,
+             mask_cldice_class_ids=getattr(args, "mask_cldice_class_ids", []),
+             mask_cldice_iterations=getattr(args, "mask_cldice_iterations", 10),
++            query_point_class_ids=getattr(args, "query_point_class_ids", []),
+             num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
+         )
+     else:
+@@ -1010,6 +1037,7 @@
+     criterion.to(device)
+     postprocess = PostProcess(
+         num_select=args.num_select,
++        query_point_class_ids=getattr(args, "query_point_class_ids", []),
+         num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
+         # Older detection-only namespaces may omit keypoint postprocess knobs; keep the ModelConfig default.
+         trace_alpha=getattr(args, "postprocess_trace_alpha", 0.2),
+diff --git a/src/rfdetr/models/postprocess.py b/src/rfdetr/models/postprocess.py
+--- a/src/rfdetr/models/postprocess.py
++++ b/src/rfdetr/models/postprocess.py
+@@ -34,12 +34,14 @@
+         num_keypoints_per_class: list[int] | None = None,
+         trace_alpha: float = 0.2,
+         upsample_masks_to_image_size: bool = True,
++        query_point_class_ids: list[int] | None = None,
+     ) -> None:
+         super().__init__()
+         if num_select < 0:
+             raise ValueError(f"num_select must be non-negative; got {num_select}")
+         self.num_select = num_select
+         self.num_keypoints_per_class = num_keypoints_per_class or []
++        self.query_point_class_ids = tuple(query_point_class_ids or [])
+         self.trace_alpha = trace_alpha
+         self.upsample_masks_to_image_size = upsample_masks_to_image_size
+ 
+@@ -65,13 +67,18 @@
+         Returns:
+             One dictionary per image. Every dictionary contains ``scores``, ``labels``, and ``boxes`` in absolute
+             pixel coordinates clamped to the respective image dimensions. Segmentation outputs also contain
+-            ``masks``. Keypoint outputs also contain ``keypoints`` and ``keypoint_precision_cholesky``. With
++            ``masks``; the optional query-point head adds ``pick_points`` (pixel xy) and ``pick_point_valid``
++            (selected-class flag, not a confidence or visibility estimate). GroupPose outputs contain ``keypoints``
++            and ``keypoint_precision_cholesky``. With
+             ``score_threshold`` set, segmentation dictionaries, and box-only dictionaries computed on the CPU, hold
+             only the detections above it — fewer rows, never different ones.
+         """
+         out_logits, out_bbox = outputs["pred_logits"], outputs["pred_boxes"]
+         out_masks = outputs.get("pred_masks")
+         out_keypoints = outputs.get("pred_keypoints")
++        out_points = outputs.get("pred_pick_points")
++        if out_points is not None and (out_masks is None or not self.query_point_class_ids):
++            raise ValueError("Picking-point postprocessing requires masks and query_point_class_ids")
+         self._validate_outputs(out_logits, out_masks, out_keypoints, target_sizes)
+ 
+         if (
+@@ -86,7 +93,7 @@
+         boxes = self._gather_and_scale_boxes(out_bbox, topk_boxes, target_sizes)
+ 
+         if out_masks is not None:
+-            return self._postprocess_masks(
++            results = self._postprocess_masks(
+                 out_masks,
+                 scores,
+                 labels,
+@@ -96,6 +103,21 @@
+                 self.upsample_masks_to_image_size,
+                 score_threshold=score_threshold,
+             )
++            if out_points is not None:
++                points = out_points.gather(1, topk_boxes.unsqueeze(-1).expand(-1, -1, 2))
++                points = points * target_sizes.flip(-1).to(points.dtype)[:, None, :]
++                for i, result in enumerate(results):
++                    keep = (
++                        torch.ones_like(scores[i], dtype=torch.bool)
++                        if score_threshold is None
++                        else scores[i] > score_threshold
++                    )
++                    result["pick_points"] = points[i, keep]
++                    valid = torch.zeros_like(result["labels"], dtype=torch.bool)
++                    for class_id in self.query_point_class_ids:
++                        valid |= result["labels"] == class_id
++                    result["pick_point_valid"] = valid
++            return results
+         if out_keypoints is not None:
+             return self._postprocess_keypoints(out_keypoints, scores, labels, boxes, topk_boxes, target_sizes)
+         return self._postprocess_boxes(scores, labels, boxes)
+diff --git a/src/rfdetr/models/weights.py b/src/rfdetr/models/weights.py
+--- a/src/rfdetr/models/weights.py
++++ b/src/rfdetr/models/weights.py
+@@ -683,6 +683,20 @@
+     Raises:
+         ImportError: If *model_state* comes from a ``backbone_lora=True`` run and ``peft`` is not installed.
+     """
++    point_keys = {key for key in nn_model.state_dict() if key.startswith("query_point_embed.")}
++    checkpoint_point_keys = {key for key in model_state if key.startswith("query_point_embed.")}
++    if point_keys or checkpoint_point_keys:
++        # A baseline checkpoint may omit the entire new head; partial heads and other
++        # missing learned parameters are not legitimate E2 warm starts.
++        expected = set(nn_model.state_dict())
++        missing = expected - set(model_state)
++        unexpected = set(model_state) - expected
++        allowed_missing = {"_kp_active_mask"} | (point_keys if not checkpoint_point_keys else set())
++        if missing - allowed_missing or unexpected:
++            raise ValueError(
++                f"Incompatible query-point checkpoint: missing={sorted(missing - allowed_missing)}, "
++                f"unexpected={sorted(unexpected)}"
++            )
+     if not any(key.startswith(_LORA_ENCODER_KEY_PREFIX) for key in model_state):
+         return nn_model.load_state_dict(model_state, strict=False)
+ 
+diff --git a/src/rfdetr/models/_types.py b/src/rfdetr/models/_types.py
+--- a/src/rfdetr/models/_types.py
++++ b/src/rfdetr/models/_types.py
+@@ -38,6 +38,9 @@
+     freeze_encoder: bool
+     backbone_lora: bool
+     two_stage: bool
++    query_point_head: bool
++    query_point_class_ids: list[int]
++    query_point_loss_coef: float
+     use_grouppose_keypoints: bool
+     keypoint_cross_attn: bool
+     inter_instance_kp_attn: bool
+diff --git a/src/rfdetr/training/module_model.py b/src/rfdetr/training/module_model.py
+--- a/src/rfdetr/training/module_model.py
++++ b/src/rfdetr/training/module_model.py
+@@ -403,6 +403,9 @@
+         super().__init__()
+         self.model_config = model_config
+         self.train_config = train_config
++        if model_config.query_point_head:
++            if train_config.augmentation_backend != "torchvision" or train_config.grad_accum_steps != 1:
++                raise ValueError("query_point_head v1 requires augmentation_backend=TV and grad_accum_steps=1")
+         # Manual optimization is enabled only for keypoint models so that the box-count
+         # normalizer can be accumulated across grad-accum microbatches. Detection and
+         # segmentation use Lightning's automatic optimization (PTL handles accumulation,
+diff --git a/src/rfdetr/_prediction/core.py b/src/rfdetr/_prediction/core.py
+--- a/src/rfdetr/_prediction/core.py
++++ b/src/rfdetr/_prediction/core.py
+@@ -1324,6 +1324,8 @@
+         # diverges from its transfer/consume counterparts would otherwise carry the *previous*
+         # image's tensor forward instead of raising. Rebinding every iteration makes that failure
+         # mode a loud AttributeError/TypeError on the stale `None` instead of a silent wrong value.
++        pick_points = result["pick_points"][keep_idx] if "pick_points" in result else None
++        pick_point_valid = result["pick_point_valid"][keep_idx] if pick_points is not None else None
+         keypoints = result["keypoints"][keep_idx] if has_keypoints_result else None
+         masks = result["masks"] if has_masks else None
+         # PostProcess already filters segmentation rows at score_floor. If every score row survives this predicate,
+@@ -1371,6 +1373,10 @@
+         else:
+             # A synchronous accelerator blocks on every copy; pay that wait once for the three row tensors.
+             boxes_cpu, scores_cpu, labels_cpu = _copy_rows_to_cpu_once(boxes, scores, labels)
++        pick_points_cpu = pick_points.float().to("cpu", non_blocking=is_cuda) if pick_points is not None else None
++        pick_point_valid_cpu = (
++            pick_point_valid.to("cpu", non_blocking=is_cuda) if pick_point_valid is not None else None
++        )
+         keypoints_cpu = keypoints.float().to("cpu", non_blocking=is_cuda) if keypoints is not None else None
+         # Preserve independent output storage for CPU postprocessors too; the device-to-host transfer already
+         # supplies that copy for accelerator tensors, without an intermediate copy on the accelerator. `masks` still
+@@ -1402,6 +1408,9 @@
+                 confidence=scores_cpu.numpy(),
+                 class_id=labels_cpu.numpy(),
+             )
++        if pick_points_cpu is not None and pick_point_valid_cpu is not None:
++            detections.data["pick_points"] = pick_points_cpu.numpy()
++            detections.data["pick_point_valid"] = pick_point_valid_cpu.numpy()
+         if keypoint_precision_cpu is not None:
+             detections.data["keypoint_precision_cholesky"] = keypoint_precision_cpu.numpy()
+ 
+diff --git a/tests/datasets/test_query_points.py b/tests/datasets/test_query_points.py
+new file mode 100644
+--- /dev/null
++++ b/tests/datasets/test_query_points.py
+@@ -0,0 +1,101 @@
++# ------------------------------------------------------------------------
++# RF-DETR
++# Copyright (c) 2025 Roboflow. All Rights Reserved.
++# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
++# ------------------------------------------------------------------------
++"""Single-point annotation routing preserves the segmentation augmentation recipe."""
++
++import json
++from pathlib import Path
++
++import pytest
++import torch
++from PIL import Image
++
++from rfdetr._namespace import _namespace_from_configs
++from rfdetr.config import RFDETRSegNanoConfig, SegmentationTrainConfig
++from rfdetr.datasets import build_dataset
++from rfdetr.datasets._torchvision import RandomHorizontalFlip, Resize, crop
++from rfdetr.datasets.transforms import Normalize
++from rfdetr.utilities.tensors import nested_tensor_from_tensor_list
++
++
++class TestQueryPointData:
++    """Load masks and points together, retain class ids, and transform coordinates."""
++
++    def test_coco_pipeline_preserves_baseline_images_masks_and_rng(self, tmp_path: Path) -> None:
++        categories = [
++            {"id": i, "name": name, "keypoints": ["pick"] if i == 1 else []}
++            for i, name in enumerate(["ripe", "stem", "unripe"])
++        ]
++        annotations = [
++            {
++                "id": i,
++                "image_id": 1,
++                "category_id": i,
++                "bbox": [4 + i * 20, 5, 12, 50],
++                "area": 600,
++                "iscrowd": 0,
++                "segmentation": [[4 + i * 20, 5, 16 + i * 20, 5, 16 + i * 20, 55, 4 + i * 20, 55]],
++                "keypoints": [30, 25, 2] if i == 1 else [],
++                "num_keypoints": int(i == 1),
++            }
++            for i in range(3)
++        ]
++        for split in ("train", "valid"):
++            folder = tmp_path / split
++            folder.mkdir()
++            Image.new("RGB", (100, 60), (20, 40, 80)).save(folder / "sample.png")
++            (folder / "_annotations.coco.json").write_text(
++                json.dumps(
++                    {
++                        "categories": categories,
++                        "images": [{"id": 1, "file_name": "sample.png", "width": 100, "height": 60}],
++                        "annotations": annotations,
++                    }
++                ),
++                encoding="utf-8",
++            )
++        tc = SegmentationTrainConfig(dataset_dir=str(tmp_path), dataset_file="roboflow", augmentation_backend="TV")
++        datasets = []
++        for enabled in (False, True):
++            mc = RFDETRSegNanoConfig(num_classes=3, device="cpu", query_point_head=enabled, query_point_class_ids=[1])
++            datasets.append(build_dataset("train", _namespace_from_configs(mc, tc), 384))
++        assert datasets[0].cat2label == datasets[1].cat2label
++        for seed in range(12):
++            torch.manual_seed(seed)
++            image0, target0 = datasets[0][0]
++            rng0 = torch.get_rng_state()
++            torch.manual_seed(seed)
++            image1, target1 = datasets[1][0]
++            assert torch.equal(rng0, torch.get_rng_state())
++            torch.testing.assert_close(image0, image1, rtol=0, atol=0)
++            for key in ("boxes", "labels", "masks"):
++                torch.testing.assert_close(target0[key], target1[key], rtol=0, atol=0)
++            assert target1["keypoints"].shape == (len(target1["labels"]), 1, 3)
++            assert (target1["keypoints"][target1["labels"] != 1, :, 2] == 0).all()
++
++    @pytest.mark.parametrize("x", [0.0, 10.0, 20.0])
++    def test_non_square_flip_resize_normalize_and_padding(self, x: float) -> None:
++        image = torch.zeros(3, 10, 20)
++        target = {"keypoints": torch.tensor([[[x, 3.0, 2.0]]])}
++        image, target = RandomHorizontalFlip(p=1)(image, target)
++        image, target = Resize((20, 60))(image, target)
++        image, target = Normalize()(image, target)
++        torch.testing.assert_close(target["keypoints"][0, 0], torch.tensor([1 - x / 20, 0.3, 2.0]))
++        before = target["keypoints"].clone()
++        nested = nested_tensor_from_tensor_list([image, torch.zeros(3, 25, 70)])
++        assert nested.mask[0, 20:, :].all() and nested.mask[0, :, 60:].all()
++        # Coordinates follow the same per-image convention as boxes, not the padded canvas.
++        assert torch.equal(before, target["keypoints"])
++
++    def test_crop_retains_stem_but_invalidates_removed_point(self) -> None:
++        target = {
++            "boxes": torch.tensor([[0.0, 0.0, 20.0, 10.0]]),
++            "labels": torch.tensor([1]),
++            "masks": torch.ones(1, 10, 20, dtype=torch.bool),
++            "keypoints": torch.tensor([[[18.0, 5.0, 2.0]]]),
++        }
++        _, target = crop(torch.zeros(3, 10, 20), target, 0, 0, 10, 10)
++        assert target["labels"].tolist() == [1]
++        assert target["masks"].any() and target["keypoints"][0, 0, 2] == 0
+diff --git a/tests/inference/prediction/test_query_points.py b/tests/inference/prediction/test_query_points.py
+new file mode 100644
+--- /dev/null
++++ b/tests/inference/prediction/test_query_points.py
+@@ -0,0 +1,48 @@
++# ------------------------------------------------------------------------
++# RF-DETR
++# Copyright (c) 2025 Roboflow. All Rights Reserved.
++# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
++# ------------------------------------------------------------------------
++"""Public segmentation detections preserve point association after class thresholds."""
++
++from dataclasses import replace
++
++import numpy as np
++import pytest
++import torch
++from pytest_mock import MockerFixture
++
++from rfdetr._prediction import core
++from tests.inference.helpers import _DummyRFDETR
++
++
++class TestQueryPointPrediction:
++    """Point rows follow every public-prediction filter, including empty results."""
++
++    @pytest.mark.parametrize("threshold", [0.2, 0.8, 1.0])
++    def test_optional_data_stays_with_masks(self, mocker: MockerFixture, threshold: float) -> None:
++        rows = {
++            "scores": torch.tensor([0.5, 0.9]),
++            "labels": torch.tensor([0, 1]),
++            "boxes": torch.zeros(2, 4),
++            "masks": torch.ones(2, 1, 10, 20, dtype=torch.bool),
++            "pick_points": torch.tensor([[4.0, 5.0], [10.0, 3.0]]),
++            "pick_point_valid": torch.tensor([False, True]),
++        }
++        context = replace(_DummyRFDETR()._prediction_context(), postprocess=mocker.Mock(return_value=[rows]))
++        prepared = core._PreparedBatch(
++            context=context,
++            batch_tensor=torch.zeros(1, 3, 10, 20),
++            target_sizes=torch.tensor([[10, 20]]),
++            orig_sizes=[(10, 20)],
++            source_images=[],
++            include_source_image=False,
++            single_input=True,
++            score_floor=0.1,
++            threshold_by_class_id=torch.tensor([1.0, threshold, float("inf")]),
++        )
++        result = core._decode_batch(prepared, {})
++        indices = [1] if threshold < 0.9 else []
++        np.testing.assert_array_equal(result.data["pick_points"], rows["pick_points"][indices].numpy())
++        np.testing.assert_array_equal(result.data["pick_point_valid"], rows["pick_point_valid"][indices].numpy())
++        assert len(result.mask) == len(result.data["pick_points"])
+diff --git a/tests/models/test_query_points.py b/tests/models/test_query_points.py
+new file mode 100644
+--- /dev/null
++++ b/tests/models/test_query_points.py
+@@ -0,0 +1,179 @@
++# ------------------------------------------------------------------------
++# RF-DETR
++# Copyright (c) 2025 Roboflow. All Rights Reserved.
++# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
++# ------------------------------------------------------------------------
++"""Independent picking-point supervision and joint segmentation inference."""
++
++import pytest
++import torch
++
++from rfdetr.config import RFDETRSegNanoConfig, SegmentationTrainConfig
++from rfdetr.models.criterion import SetCriterion
++from rfdetr.models.lwdetr import LWDETR, build_criterion_from_config
++from rfdetr.models.postprocess import PostProcess
++from rfdetr.models.weights import _load_model_state
++from tests.models.test_lwdetr_segmentation_eval import _build_seg_lwdetr, _images
++from tests.models.test_soft_cldice_integration import _IdentityMatcher
++
++
++def _criterion(coef: float = 1.0) -> SetCriterion:
++    """Build the isolated point criterion.
++
++    Examples:
++        >>> _criterion().query_point_class_ids
++        (1,)
++    """
++    return SetCriterion(3, None, {"loss_query_point": coef}, 0.25, [], query_point_class_ids=[1])
++
++
++def _model(enabled: bool) -> LWDETR:
++    """Build identical shared weights and fixed decoder features for both switches.
++
++    Examples:
++        >>> _model(False).query_point_embed is None
++        True
++    """
++    stub = _build_seg_lwdetr()
++    torch.manual_seed(42)
++    return LWDETR(
++        stub.backbone,
++        stub.transformer,
++        stub.segmentation_head,
++        5,
++        3,
++        aux_loss=True,
++        two_stage=True,
++        query_point_head=enabled,
++    )
++
++
++class TestQueryPointLoss:
++    """Only visible matched selected-class points contribute, with group averaging."""
++
++    def test_selection_group_mean_and_gradient(self) -> None:
++        pred = torch.full((1, 4, 2), 0.5, requires_grad=True)
++        target = {
++            "labels": torch.tensor([0, 1, 1]),
++            "keypoints": torch.tensor(
++                [
++                    [[0.0, 0.0, 2.0]],
++                    [[0.1, 0.3, 2.0]],
++                    [[0.9, 0.9, 0.0]],
++                ]
++            ),
++        }
++        indices = [(torch.arange(4), torch.tensor([0, 1, 2, 1]))]
++        loss = _criterion().loss_query_point({"pred_pick_points": pred}, [target], indices)["loss_query_point"]
++        torch.testing.assert_close(loss, torch.tensor(0.3))
++        loss.backward()
++        torch.testing.assert_close(pred.grad[0, [0, 2]], torch.zeros(2, 2))
++        torch.testing.assert_close(pred.grad[0, [1, 3]], torch.full((2, 2), 0.25))
++
++    @pytest.mark.parametrize("empty", [True, False])
++    def test_empty_or_invisible_connected_zero(self, empty: bool) -> None:
++        pred = torch.rand(1, 2, 2, requires_grad=True)
++        n = 0 if empty else 1
++        targets = [{"labels": torch.ones(n, dtype=torch.long), "keypoints": torch.zeros(n, 1, 3)}]
++        indices = [(torch.arange(n), torch.arange(n))]
++        loss = _criterion().loss_query_point({"pred_pick_points": pred}, targets, indices)["loss_query_point"]
++        assert loss.item() == 0
++        loss.backward()
++        assert pred.grad is not None and pred.grad.count_nonzero() == 0
++
++    def test_missing_annotation_fails_loudly(self) -> None:
++        with pytest.raises(ValueError, match="keypoints"):
++            _criterion().loss_query_point(
++                {"pred_pick_points": torch.zeros(1, 1, 2)},
++                [{"labels": torch.tensor([1])}],
++                [(torch.tensor([0]), torch.tensor([0]))],
++            )
++
++    def test_zero_coefficient_preserves_original_losses_and_gradients(self) -> None:
++        pred = torch.full((1, 1, 2), 0.5, requires_grad=True)
++        criterion = _criterion(0.0)
++        criterion.matcher = _IdentityMatcher()
++        target = {"labels": torch.tensor([1]), "keypoints": torch.tensor([[[0.1, 0.3, 2.0]]])}
++        output = {"pred_pick_points": pred, "pred_logits": torch.zeros(1, 1, 3), "pred_boxes": torch.zeros(1, 1, 4)}
++        losses = criterion(output, [target])
++        assert set(losses) == {"loss_query_point"}
++        (losses["loss_query_point"] * criterion.weight_dict["loss_query_point"]).backward()
++        assert pred.grad is not None and pred.grad.count_nonzero() == 0
++
++
++class TestQueryPointModel:
++    """Opt-in head consumes final shared queries without changing the existing RNG stream."""
++
++    def test_shared_state_rng_and_outputs_identical(self) -> None:
++        baseline = _model(False).eval()
++        rng = torch.get_rng_state()
++        enabled = _model(True).eval()
++        assert torch.equal(rng, torch.get_rng_state())
++        for name, value in baseline.state_dict().items():
++            torch.testing.assert_close(value, enabled.state_dict()[name], rtol=0, atol=0)
++        a, b = baseline(_images()), enabled(_images())
++        for key in ("pred_logits", "pred_boxes", "pred_masks"):
++            torch.testing.assert_close(a[key], b[key], rtol=0, atol=0)
++        assert b["pred_pick_points"].shape == (2, 3, 2)
++        assert "pred_pick_points" not in a
++        assert all("pred_pick_points" not in x for x in [*b["aux_outputs"], b["enc_outputs"]])
++
++    def test_export_explicitly_unsupported(self) -> None:
++        with pytest.raises(NotImplementedError, match="query.point|picking.point"):
++            _model(True).forward_export(_images())
++
++    def test_export_rejection_leaves_model_usable(self) -> None:
++        """An unsupported export must fail before mutating normal inference state."""
++        model = _model(True).eval()
++        forward = model.forward
++        with pytest.raises(NotImplementedError, match="query.point"):
++            model.export()
++        assert not model._export and model.forward == forward
++        assert "pred_pick_points" in model(_images())
++
++    def test_final_only_weight_and_independent_switch(self) -> None:
++        mc = RFDETRSegNanoConfig(query_point_head=True, query_point_class_ids=[1], num_classes=3, device="cpu")
++        criterion, _ = build_criterion_from_config(mc, SegmentationTrainConfig(dataset_dir="/tmp"))
++        assert criterion.weight_dict["loss_query_point"] == 1
++        assert not any(k.startswith("loss_query_point_") for k in criterion.weight_dict)
++        assert "keypoints" not in criterion.losses and "masks" in criterion.losses
++        assert not mc.use_grouppose_keypoints
++
++    def test_pretrain_allows_only_whole_new_head_missing(self) -> None:
++        base = _model(False).state_dict()
++        enabled = _model(True)
++        incompatible = _load_model_state(enabled, base, backbone_lora=False)
++        assert all(k.startswith("query_point_embed.") for k in incompatible.missing_keys)
++        broken = dict(base)
++        broken.pop("class_embed.weight")
++        with pytest.raises(ValueError, match="class_embed.weight"):
++            _load_model_state(enabled, broken, backbone_lora=False)
++        partial = enabled.state_dict()
++        partial.pop("query_point_embed.layers.0.weight")
++        with pytest.raises(ValueError, match="query_point_embed"):
++            _load_model_state(enabled, partial, backbone_lora=False)
++        _load_model_state(enabled, enabled.state_dict(), backbone_lora=False)
++        with pytest.raises(ValueError, match="unexpected"):
++            _load_model_state(_model(False), enabled.state_dict(), backbone_lora=False)
++
++
++class TestQueryPointPostprocess:
++    """Points, masks, boxes and labels follow exactly the same top-k and threshold rows."""
++
++    @pytest.mark.parametrize("threshold", [None, 0.7, 1.0])
++    def test_joint_selection(self, threshold: float | None) -> None:
++        outputs = {
++            "pred_logits": torch.tensor([[[0.0, 1.0, -2.0], [3.0, 4.0, -3.0]]]),
++            "pred_boxes": torch.full((1, 2, 4), 0.5),
++            "pred_masks": torch.tensor([[[[-1.0, -1.0], [-1.0, -1.0]], [[1.0, 1.0], [1.0, 1.0]]]]),
++            "pred_pick_points": torch.tensor([[[0.1, 0.2], [0.6, 0.8]]]),
++        }
++        post = PostProcess(num_select=4, query_point_class_ids=[1])
++        result = post(outputs, torch.tensor([[10, 20]]), score_threshold=threshold)[0]
++        scores, labels, query = post._select_topk(outputs["pred_logits"])
++        keep = torch.ones(4, dtype=torch.bool) if threshold is None else scores[0] > threshold
++        torch.testing.assert_close(
++            result["pick_points"], outputs["pred_pick_points"][0, query[0, keep]] * torch.tensor([20, 10])
++        )
++        assert torch.equal(result["pick_point_valid"], labels[0, keep] == 1)
++        assert torch.equal(result["masks"].flatten(1).all(1), query[0, keep] == 1)
+diff --git a/tests/models/test_query_points_distributed.py b/tests/models/test_query_points_distributed.py
+new file mode 100644
+--- /dev/null
++++ b/tests/models/test_query_points_distributed.py
+@@ -0,0 +1,67 @@
++# ------------------------------------------------------------------------
++# RF-DETR
++# Copyright (c) 2025 Roboflow. All Rights Reserved.
++# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
++# ------------------------------------------------------------------------
++"""Real two-process reduction and device-safe Hungarian indices for point loss."""
++
++from datetime import timedelta
++from pathlib import Path
++
++import pytest
++import torch
++import torch.distributed as dist
++from torch import nn
++from torch.nn.parallel import DistributedDataParallel
++
++from tests._markers import _requires_cuda
++from tests.models.test_query_points import _criterion
++
++
++def _worker(rank: int, rendezvous: str, directory: str, labels: tuple[int, int]) -> None:
++    """Compute one matched point per rank, selected by class.
++
++    Examples:
++        Requires two processes:
++        >>> _worker(0, 'file:///tmp/init', '/tmp', (1, 0))  # doctest: +SKIP
++    """
++    torch.set_num_threads(1)
++    dist.init_process_group("gloo", init_method=rendezvous, rank=rank, world_size=2, timeout=timedelta(seconds=45))
++    try:
++        model = DistributedDataParallel(nn.Linear(1, 2, bias=False))
++        nn.init.constant_(model.module.weight, 0.5)
++        pred = model(torch.ones(1, 1)).unsqueeze(0)
++        target = {"labels": torch.tensor([labels[rank]]), "keypoints": torch.tensor([[[0.1, 0.3, 2.0]]])}
++        indices = [(torch.tensor([0]), torch.tensor([0]))]
++        loss = _criterion().loss_query_point({"pred_pick_points": pred}, [target], indices)["loss_query_point"]
++        loss.backward()
++        torch.save({"loss": loss.detach(), "grad": model.module.weight.grad}, Path(directory) / f"rank{rank}.pt")
++    finally:
++        dist.destroy_process_group()
++
++
++class TestQueryPointDistributed:
++    """DDP averaging must agree with a single global valid-point mean."""
++
++    @pytest.mark.ddp
++    @pytest.mark.parametrize("labels", [(1, 1), (1, 0), (0, 0)])
++    def test_two_rank_matches_serial(self, tmp_path: Path, labels: tuple[int, int]) -> None:
++        torch.multiprocessing.spawn(_worker, args=((tmp_path / "init").as_uri(), str(tmp_path), labels), nprocs=2)
++        rows = [torch.load(tmp_path / f"rank{i}.pt", weights_only=True) for i in range(2)]
++        expected = 0.3 if 1 in labels else 0.0
++        torch.testing.assert_close(sum(r["loss"] for r in rows) / 2, torch.tensor(expected))
++        for row in rows:
++            torch.testing.assert_close(row["grad"], torch.full((2, 1), 0.5 if 1 in labels else 0.0))
++
++    @pytest.mark.gpu
++    @_requires_cuda
++    def test_cpu_match_indices_with_cuda_targets(self) -> None:
++        pred = torch.full((1, 2, 2), 0.5, device="cuda", requires_grad=True)
++        target = {
++            "labels": torch.tensor([0, 1], device="cuda"),
++            "keypoints": torch.tensor([[[0.0, 0.0, 0.0]], [[0.1, 0.3, 2.0]]], device="cuda"),
++        }
++        indices = [(torch.arange(2), torch.arange(2))]
++        loss = _criterion().loss_query_point({"pred_pick_points": pred}, [target], indices)["loss_query_point"]
++        loss.backward()
++        assert torch.isfinite(pred.grad).all() and pred.grad[0, 1].abs().sum() > 0

@@ -1,0 +1,13 @@
+{
+  "recorded_at_utc": "2026-11-12T01:05:04.471739+00:00",
+  "job_id": "20261112-085259-9638",
+  "started_at_Asia_Shanghai": "2026-11-12 08:52:59",
+  "formal_training_started": true,
+  "completed_epochs_at_observation": 5,
+  "last_observed_timing_status": "running",
+  "source_manifest_sha256": "1f56cda2bd9d2b3ad5febcc08564f7176e2cc54887492f57d6a770d90033b4bd",
+  "source_state": "uncommitted_snapshot",
+  "remote_output": "/usr/local/rfdetr26/output/output1/e1-seg-small-cldice-c0p1-v1-seed42/training",
+  "preflight_job_id": "20261112-085139-00f5",
+  "preflight_passed": true
+}

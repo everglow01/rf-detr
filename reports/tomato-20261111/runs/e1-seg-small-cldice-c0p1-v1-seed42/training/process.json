@@ -1,0 +1,24 @@
+{
+  "git_base_commit": "a459eeade6387927c599a50f287a319a19d7ae82",
+  "source_state": "uncommitted_snapshot",
+  "source_manifest_sha256": "1f56cda2bd9d2b3ad5febcc08564f7176e2cc54887492f57d6a770d90033b4bd",
+  "label": "training",
+  "devices": 2,
+  "cuda_visible_devices": "0,1",
+  "started_at_utc": "2026-11-12T00:52:59.662708+00:00",
+  "command": [
+    "/usr/local/rfdetr26/.venv/bin/python",
+    "-B",
+    "-m",
+    "torch.distributed.run",
+    "--standalone",
+    "--nnodes=1",
+    "--nproc_per_node=2",
+    "--module",
+    "rfdetr",
+    "fit",
+    "--config",
+    "/usr/local/rfdetr26/output/output1/e1-seg-small-cldice-c0p1-v1-seed42/training.yaml"
+  ],
+  "config_sha256": "e2ce54f4144355467ed4cf448dc3588d33ec7e05451030311ba15810a82b625a"
+}

@@ -1,0 +1,38 @@
+{
+  "python_ast_files": 16,
+  "yaml_baseline_parity": "pass",
+  "historical_green1_tests": "20 passed; not current source",
+  "current_dynamic_tests": "pending Git synchronization",
+  "local_pre_commit_module_available": false,
+  "files_changed_since_green1": [
+    "src/rfdetr/config.py",
+    "src/rfdetr/inference.py",
+    "src/rfdetr/datasets/_aug_utils.py",
+    "src/rfdetr/models/criterion.py",
+    "src/rfdetr/models/lwdetr.py",
+    "src/rfdetr/models/postprocess.py",
+    "src/rfdetr/training/module_model.py",
+    "tests/datasets/test_query_points.py",
+    "tests/inference/prediction/test_query_points.py",
+    "tests/models/test_query_points.py",
+    "tests/models/test_query_points_distributed.py"
+  ],
+  "ruff_check": {
+    "exit_code": 0,
+    "output": "All checks passed!\n"
+  },
+  "ruff_format": {
+    "exit_code": 0,
+    "output": "16 files already formatted\n"
+  },
+  "git_diff_check": {
+    "exit_code": 0,
+    "output": "warning: in the working copy of 'AGENTS.md', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'src/rfdetr/config.py', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'src/rfdetr/models/criterion.py', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'src/rfdetr/models/lwdetr.py', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'src/rfdetr/models/postprocess.py', LF will be replaced by CRLF the next time Git touches it\n"
+  },
+  "e2_patch_reverse_check": {
+    "exit_code": 0,
+    "output": ""
+  },
+  "head": "a459eeade6387927c599a50f287a319a19d7ae82",
+  "branch": "codex/tomato-topology-keypoints"
+}

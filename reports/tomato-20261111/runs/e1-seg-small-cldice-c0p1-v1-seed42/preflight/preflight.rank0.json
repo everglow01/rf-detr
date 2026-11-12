@@ -1,0 +1,31 @@
+{
+  "passed": true,
+  "rank": 0,
+  "world_size": 2,
+  "backend": "nccl",
+  "backward_steps": 2,
+  "criterion_calls": [
+    {
+      "training": true,
+      "cldice": 0.3136810064315796
+    },
+    {
+      "training": true,
+      "cldice": 0.5516386032104492
+    },
+    {
+      "training": false,
+      "cldice": 0.6036720275878906
+    },
+    {
+      "training": false,
+      "cldice": 0.8580971360206604
+    }
+  ],
+  "logged_metrics": {
+    "val/loss_mask_cldice": 0.8765758872032166,
+    "train/loss_mask_cldice": 0.4326598048210144
+  },
+  "peak_allocated_mib": 8705.81494140625,
+  "peak_reserved_mib": 9614.0
+}

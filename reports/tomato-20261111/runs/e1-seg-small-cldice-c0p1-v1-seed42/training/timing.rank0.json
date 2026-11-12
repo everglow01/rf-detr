@@ -1,0 +1,123 @@
+{
+  "status": "running",
+  "rank": 0,
+  "world_size": 2,
+  "precision": "bf16-mixed",
+  "epoch_records": [
+    {
+      "epoch": 1,
+      "started_perf_counter": 5090310.441269914,
+      "global_step_start": 0,
+      "expected_train_batches": 88,
+      "train_batches": 88,
+      "complete": true,
+      "validation_started_perf_counter": 5090446.878422975,
+      "training_seconds": 136.43715306092054,
+      "optimizer_steps": 88,
+      "validation_seconds": 4.959220088087022,
+      "metrics": {
+        "val/segm_mAP_50_95": 0.5335974097251892,
+        "val/ema_segm_mAP_50_95": 0.5335974097251892,
+        "val/mAP_50_95": 0.5557129383087158,
+        "val/loss": 8.062300682067871
+      },
+      "epoch_total_seconds": 143.7042674701661,
+      "peak_allocated_mib": 13606.7177734375,
+      "peak_reserved_mib": 16702.0
+    },
+    {
+      "epoch": 2,
+      "started_perf_counter": 5090454.145537384,
+      "global_step_start": 88,
+      "expected_train_batches": 88,
+      "train_batches": 88,
+      "complete": true,
+      "validation_started_perf_counter": 5090568.841588404,
+      "training_seconds": 114.69605102017522,
+      "optimizer_steps": 88,
+      "validation_seconds": 3.6612214483320713,
+      "metrics": {
+        "val/segm_mAP_50_95": 0.6014789938926697,
+        "val/ema_segm_mAP_50_95": 0.6014789938926697,
+        "val/mAP_50_95": 0.6393808126449585,
+        "val/loss": 6.791087627410889
+      },
+      "epoch_total_seconds": 120.77470040228218,
+      "peak_allocated_mib": 13548.51953125,
+      "peak_reserved_mib": 16704.0
+    },
+    {
+      "epoch": 3,
+      "started_perf_counter": 5090574.920237786,
+      "global_step_start": 176,
+      "expected_train_batches": 88,
+      "train_batches": 88,
+      "complete": true,
+      "validation_started_perf_counter": 5090693.529024283,
+      "training_seconds": 118.6087864972651,
+      "optimizer_steps": 88,
+      "validation_seconds": 3.715091524645686,
+      "metrics": {
+        "val/segm_mAP_50_95": 0.6447306871414185,
+        "val/ema_segm_mAP_50_95": 0.6447306871414185,
+        "val/mAP_50_95": 0.6793614029884338,
+        "val/loss": 6.3254804611206055
+      },
+      "epoch_total_seconds": 124.75582172069699,
+      "peak_allocated_mib": 13567.87255859375,
+      "peak_reserved_mib": 16704.0
+    },
+    {
+      "epoch": 4,
+      "started_perf_counter": 5090699.676059507,
+      "global_step_start": 264,
+      "expected_train_batches": 88,
+      "train_batches": 88,
+      "complete": true,
+      "validation_started_perf_counter": 5090817.376339908,
+      "training_seconds": 117.70028040092438,
+      "optimizer_steps": 88,
+      "validation_seconds": 3.771072589792311,
+      "metrics": {
+        "val/segm_mAP_50_95": 0.6587375998497009,
+        "val/ema_segm_mAP_50_95": 0.6587375998497009,
+        "val/mAP_50_95": 0.7023892402648926,
+        "val/loss": 6.0432820320129395
+      },
+      "epoch_total_seconds": 123.6171750407666,
+      "peak_allocated_mib": 14158.69482421875,
+      "peak_reserved_mib": 16730.0
+    },
+    {
+      "epoch": 5,
+      "started_perf_counter": 5090823.293234548,
+      "global_step_start": 352,
+      "expected_train_batches": 88,
+      "train_batches": 88,
+      "complete": true,
+      "validation_started_perf_counter": 5090937.228704575,
+      "training_seconds": 113.93547002784908,
+      "optimizer_steps": 88,
+      "validation_seconds": 3.7544398372992873,
+      "metrics": {
+        "val/segm_mAP_50_95": 0.6754124760627747,
+        "val/ema_segm_mAP_50_95": 0.6754124760627747,
+        "val/mAP_50_95": 0.7173823118209839,
+        "val/loss": 5.904746055603027
+      },
+      "epoch_total_seconds": 120.16618379484862,
+      "peak_allocated_mib": 13625.9833984375,
+      "peak_reserved_mib": 16730.0
+    },
+    {
+      "epoch": 6,
+      "started_perf_counter": 5090943.459418342,
+      "global_step_start": 440,
+      "expected_train_batches": 88,
+      "train_batches": 0,
+      "complete": false
+    }
+  ],
+  "fit_elapsed_seconds": 633.034402991645,
+  "note": "epoch_total_seconds spans epoch start to next epoch start (last: fit end), including validation/checkpoints"
+}

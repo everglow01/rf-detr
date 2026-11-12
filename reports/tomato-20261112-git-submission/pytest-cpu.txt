@@ -1,0 +1,59 @@
+ss...s.............................s.................................... [  8%]
+....................ssss................................................ [ 17%]
+........................................................................ [ 26%]
+........................................................................ [ 34%]
+........................................................................ [ 43%]
+.....................................................s.................. [ 52%]
+...s..........................................................s.s....... [ 61%]
+.....sss................................................................ [ 69%]
+........................................................................ [ 78%]
+..........................s............................................. [ 87%]
+........................................................................ [ 96%]
+...................s....s.......                                         [100%]
+============================== warnings summary ===============================
+.venv\Lib\site-packages\torch\jit\_script.py:1491
+.venv\Lib\site-packages\torch\jit\_script.py:1491
+  F:\OneDrive\Desktop\��������\rfdetr26\.venv\Lib\site-packages\torch\jit\_script.py:1491: FutureWarning: `torch.jit.script` is deprecated. Please switch to `torch.compile` or `torch.export`.
+    warnings.warn(
+
+tests/datasets/test_query_points.py::TestQueryPointData::test_coco_pipeline_preserves_baseline_images_masks_and_rng
+  F:\OneDrive\Desktop\��������\rfdetr26\src\rfdetr\datasets\coco.py:1687: UserWarning: RF-DETR has changed the default training augmentation backend from Albumentations (cv2 INTER_LINEAR, no antialias) to torchvision (BILINEAR + antialias=True). Pixel values will differ slightly from previous versions; mAP may drift on existing benchmarks. To restore the previous behaviour, install rfdetr[augment] and pass aug_config=AUG_CONFIG from rfdetr.datasets.aug_configs.
+    transforms=make_coco_transforms_square_div_64(
+
+tests/datasets/test_query_points.py: 72 warnings
+  F:\OneDrive\Desktop\��������\rfdetr26\.venv\Lib\site-packages\pycocotools\mask.py:89: DeprecationWarning: __array__ implementation doesn't accept a copy keyword, so passing copy=False failed. __array__ must implement 'dtype' and 'copy' keyword arguments. To learn more, see the migration guide https://numpy.org/devdocs/numpy_2_0_migration_guide.html#adapting-to-changes-in-the-copy-keyword
+    return _mask.decode(rleObjs)
+
+tests/models/test_config.py::TestTrainConfigT42PromotedFields::test_promoted_field_accepts_explicit_value[fp16_eval-True]
+  F:\OneDrive\Desktop\��������\rfdetr26\.venv\Lib\site-packages\pydantic\main.py:280: FutureWarning: fp16_eval is deprecated and has no effect; evaluation precision follows amp_dtype. Set amp_dtype='fp16' to evaluate in fp16.
+    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)
+
+tests/models/test_weights.py::TestLoadPretrainWeightsLoraCheckpoint::test_lora_run_reloads_every_checkpoint_tensor[inference]
+  F:\OneDrive\Desktop\��������\rfdetr26\src\rfdetr\detr.py:930: FutureWarning: Use a size-specific class such as `RFDETRSmall` instead (see the migration guide).
+    getattr(variant_obj, "__name__", symbol): variant_obj
+
+tests/models/test_weights.py::TestLoadPretrainWeightsLoraCheckpoint::test_lora_run_reloads_every_checkpoint_tensor[inference]
+  F:\OneDrive\Desktop\��������\rfdetr26\src\rfdetr\detr.py:930: FutureWarning: The `RFDETRLargeDeprecated` was deprecated since v1.7.0. It will be removed in v2.0.0.
+    getattr(variant_obj, "__name__", symbol): variant_obj
+
+tests/models/test_weights.py::TestLoadPretrainWeightsLoraCheckpoint::test_lora_run_reloads_every_checkpoint_tensor[inference]
+  F:\OneDrive\Desktop\��������\rfdetr26\src\rfdetr\detr.py:930: FutureWarning: Use a size-specific segmentation class such as `RFDETRSegSmall` instead (see the migration guide).
+    getattr(variant_obj, "__name__", symbol): variant_obj
+
+tests/datasets/test_coco.py::TestScaleJitter::test_transform_factories_forward_scale_jitter[enabled_keeps_crop-standard]
+tests/datasets/test_coco.py::TestScaleJitter::test_transform_factories_forward_scale_jitter[enabled_keeps_crop-square_div_64]
+tests/datasets/test_coco.py::TestScaleJitter::test_transform_factories_forward_scale_jitter[disabled_drops_crop-standard]
+tests/datasets/test_coco.py::TestScaleJitter::test_transform_factories_forward_scale_jitter[disabled_drops_crop-square_div_64]
+  F:\OneDrive\Desktop\��������\rfdetr26\tests\datasets\test_coco.py:1012: UserWarning: RF-DETR has changed the default training augmentation backend from Albumentations (cv2 INTER_LINEAR, no antialias) to torchvision (BILINEAR + antialias=True). Pixel values will differ slightly from previous versions; mAP may drift on existing benchmarks. To restore the previous behaviour, install rfdetr[augment] and pass aug_config=AUG_CONFIG from rfdetr.datasets.aug_configs.
+    factory("train", 640, scale_jitter=scale_jitter)
+
+tests/datasets/test_coco.py::TestCrossSplitLabelSpace::test_val_split_reuses_the_train_label_mapping
+  F:\OneDrive\Desktop\��������\rfdetr26\src\rfdetr\datasets\coco.py:1712: UserWarning: RF-DETR has changed the default training augmentation backend from Albumentations (cv2 INTER_LINEAR, no antialias) to torchvision (BILINEAR + antialias=True). Pixel values will differ slightly from previous versions; mAP may drift on existing benchmarks. To restore the previous behaviour, install rfdetr[augment] and pass aug_config=AUG_CONFIG from rfdetr.datasets.aug_configs.
+    transforms=make_coco_transforms(
+
+tests/inference/prediction/test_core.py: 12 warnings
+  F:\OneDrive\Desktop\��������\rfdetr26\.venv\Lib\site-packages\torchvision\io\image.py:33: DeprecationWarning: The image decoding and encoding capabilities of TorchVision are deprecated since torchvision 0.29 and will be removed in a future release. They are superseded by the more complete decoders and encoders of TorchCodec (from torchcodec 0.16). Please see https://meta-pytorch.org/torchcodec/0.16/generated_examples/migration/torchvision_migration.html on how to migrate your code.
+    warnings.warn(_DEPRECATION_MSG, DeprecationWarning)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+806 passed, 18 skipped, 19 deselected, 96 warnings in 74.09s (0:01:14)

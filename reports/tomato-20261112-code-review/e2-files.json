@@ -1,0 +1,104 @@
+[
+  {
+    "path": "configs/tomato/seg_small_query_point.yaml",
+    "original_sha256": null,
+    "e2_sha256": "53d41be3b446462568b5596880c8cd706f5be92d46f7f27736cc6ff075e527b1",
+    "current_sha256": "53d41be3b446462568b5596880c8cd706f5be92d46f7f27736cc6ff075e527b1"
+  },
+  {
+    "path": "src/rfdetr/config.py",
+    "original_sha256": "fc8afd6858c570883a7d9ef3ea24212d26b2f284e0c43f6dbeb7119cfcc0a914",
+    "e2_sha256": "c6eb69e4b04d3869b92b69a9162718e1e8674fe14ae0ef46d04a70258191e1fe",
+    "current_sha256": "e17eec9c4db27f3eb03dcfa9e30063d6f69997d942aa0cf9b7955ac3cf2ca5dd"
+  },
+  {
+    "path": "src/rfdetr/inference.py",
+    "original_sha256": "1c100546555ae2a31724eb29b47d52596077707b738ec14c0a9650575fde8013",
+    "e2_sha256": "7811afc597cbe0573c3e68cf7f880aaf13f3dddc77274a212fb81b30b40977de",
+    "current_sha256": "7811afc597cbe0573c3e68cf7f880aaf13f3dddc77274a212fb81b30b40977de"
+  },
+  {
+    "path": "src/rfdetr/_namespace.py",
+    "original_sha256": "3a47a0cc3a8b55e068a1c5c25724a167e5a3ce02d389b249fcdf4bf4ca18e373",
+    "e2_sha256": "53e8c125d8f0aa35c97cdd58f089066b6f66e113221beabbb946afe8db25de6d",
+    "current_sha256": "53e8c125d8f0aa35c97cdd58f089066b6f66e113221beabbb946afe8db25de6d"
+  },
+  {
+    "path": "src/rfdetr/datasets/coco.py",
+    "original_sha256": "bead935ac9a279ec78e8a2dae0fe356d999e00e388e422a00162694ccc5d91b0",
+    "e2_sha256": "b166296c33c5d208b90cc210c54738581760ef8ae47a24ec914ece92534c7ee2",
+    "current_sha256": "b166296c33c5d208b90cc210c54738581760ef8ae47a24ec914ece92534c7ee2"
+  },
+  {
+    "path": "src/rfdetr/datasets/_aug_utils.py",
+    "original_sha256": "f9505363a15e1b8dd1aba5feb2cf9ad5e3ec1f903a2dfd9cea344ccba901d426",
+    "e2_sha256": "1878db94ad75458c13eb4a860a78b634da7b25cb17b516c913a48ab6a7a6e3de",
+    "current_sha256": "1878db94ad75458c13eb4a860a78b634da7b25cb17b516c913a48ab6a7a6e3de"
+  },
+  {
+    "path": "src/rfdetr/models/criterion.py",
+    "original_sha256": "bd62a40d4c53db7d008e0bb5901b9736db43ff9aaaa2a1be2497f803ec02a511",
+    "e2_sha256": "9e39505f36b23a5c1dc2112c418e9237027f303644b06f16c8467266afe86973",
+    "current_sha256": "5ca9c53885eb082b0ec2bb324931b50e8538cb825cc9b21bfc9c9b2e04360e60"
+  },
+  {
+    "path": "src/rfdetr/models/lwdetr.py",
+    "original_sha256": "7a220e6d819d51f353c55ad70e49de3904aba54ab447241f98891ac0522013bd",
+    "e2_sha256": "4d5e851830b74d9e89c1e9473f89700d897f585ca17be884d10feac2c9440ce7",
+    "current_sha256": "58ba4e2df8be4e92a1b8eb6314b8b5df71bffaa897215c41973451cb6284dacd"
+  },
+  {
+    "path": "src/rfdetr/models/postprocess.py",
+    "original_sha256": "a7c3746daf08051f51872adf32d1c2cf4e2b53ff60bfe09a5875b69c117aa2eb",
+    "e2_sha256": "790f4dee090dfbaa63a659a4ee27a51651e80fc103eecd01fb80e6771763f273",
+    "current_sha256": "60fe744f5a8a1707479fce6187652bec23a6f4f3ee4627bd1753145987b05e04"
+  },
+  {
+    "path": "src/rfdetr/models/weights.py",
+    "original_sha256": "42e3023b10c8b9408b333834a0694c311c090f5c964a42ef6ad4ebfb65541291",
+    "e2_sha256": "db331b84064db4b72b04252dd881d4bfc8e20c40273df1404ebaa6d7d60277e1",
+    "current_sha256": "db331b84064db4b72b04252dd881d4bfc8e20c40273df1404ebaa6d7d60277e1"
+  },
+  {
+    "path": "src/rfdetr/models/_types.py",
+    "original_sha256": "7ee1d89c0606a775d868950ef4f85aa9b31dfdae448dd9c6e69cd87c50298449",
+    "e2_sha256": "89f69ff2898770e98cf6407c9364c386d97a964284f7d03ea775823608e973e9",
+    "current_sha256": "89f69ff2898770e98cf6407c9364c386d97a964284f7d03ea775823608e973e9"
+  },
+  {
+    "path": "src/rfdetr/training/module_model.py",
+    "original_sha256": "97bb351a258bd7dc868a8f13aa8bc7d41eede66b04cf3bae4a3117f6ea0d08c1",
+    "e2_sha256": "5bca1f565f7f68d53ce826852ecee00f1982214ce16fc50c5c0a359d3d3907c0",
+    "current_sha256": "5bca1f565f7f68d53ce826852ecee00f1982214ce16fc50c5c0a359d3d3907c0"
+  },
+  {
+    "path": "src/rfdetr/_prediction/core.py",
+    "original_sha256": "cf99a4af8203b86c2e9c598f1c4a1d24803617491325065977233e380cc34d19",
+    "e2_sha256": "352fa8bf6fd99db9c370ffc0bd2948181767547c646276323d110a2f3f19ac7d",
+    "current_sha256": "352fa8bf6fd99db9c370ffc0bd2948181767547c646276323d110a2f3f19ac7d"
+  },
+  {
+    "path": "tests/datasets/test_query_points.py",
+    "original_sha256": null,
+    "e2_sha256": "d090a5f3e3ec414b3a81997e142cf4bb82f94a1f25229559156a0f185e7a369f",
+    "current_sha256": "47254ad3a664bdc3d203e92d581f911a08046fee14e74b30768ec419a85b68dc"
+  },
+  {
+    "path": "tests/inference/prediction/test_query_points.py",
+    "original_sha256": null,
+    "e2_sha256": "ddb03fe0f891c1bf81675c3349e14ca6b19baae393b1727e5406d35921e4efec",
+    "current_sha256": "61e58ce7b9728f409c0fbff25ca25786f3a385f8db527d5a67860dc90559a438"
+  },
+  {
+    "path": "tests/models/test_query_points.py",
+    "original_sha256": null,
+    "e2_sha256": "48ab20a99c168c5d38bca63d04631846ba4d417e8be07828182b07767529f808",
+    "current_sha256": "3d3d8f9abcaf7dc125e757d7e80e7073962cffb00bfa388b82d843503366538c"
+  },
+  {
+    "path": "tests/models/test_query_points_distributed.py",
+    "original_sha256": null,
+    "e2_sha256": "1daab5646565dc42ea53ee212b47ed2a7635fe10251135b0f97b72d5aaa20a84",
+    "current_sha256": "f18b781c0d2c0f7248d43ace6aa766d2fbc909c0df2e8829a2e0b494f7aaa0a4"
+  }
+]

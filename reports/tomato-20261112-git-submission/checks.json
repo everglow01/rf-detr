@@ -1,0 +1,152 @@
+{
+  "date": "2026-11-12",
+  "branch": "codex/tomato-topology-keypoints",
+  "baseline_commit": "a459eeade6387927c599a50f287a319a19d7ae82",
+  "source_commit": "22ed56c17ce4f191f39ea50d9896f968a0f06d4a",
+  "environment": {
+    "os": "Windows",
+    "python": "3.11.15",
+    "torch": "2.14.0+cpu"
+  },
+  "cpu_regression": {
+    "passed": 806,
+    "skipped": 18,
+    "deselected_gpu": 19,
+    "elapsed_seconds": 74.09,
+    "doctest_plus": true
+  },
+  "mypy": {
+    "command": "python -m mypy src/rfdetr/ scripts/ --no-error-summary",
+    "exit_code": 0
+  },
+  "cli_parse": {
+    "seg_small_baseline.yaml": {
+      "exit_code": 0,
+      "command": "python -m rfdetr fit --config configs/tomato/seg_small_baseline.yaml --print_config",
+      "log_sha256": "950dce2652b5032b0265c5e709d89b464cc3335d93538cdbf75d4c6e357fbbef"
+    },
+    "seg_small_cldice.yaml": {
+      "exit_code": 0,
+      "command": "python -m rfdetr fit --config configs/tomato/seg_small_cldice.yaml --print_config",
+      "log_sha256": "788f6e6d5fc56ed30416d5d8408ef900b9d4b3c53736475fea9910c3f611b482"
+    },
+    "seg_small_query_point.yaml": {
+      "exit_code": 0,
+      "command": "python -m rfdetr fit --config configs/tomato/seg_small_query_point.yaml --print_config",
+      "log_sha256": "c6df9c426ae51f9f29d541de21bac34479987ec8d0ec05204d565e2f579c7f8a"
+    }
+  },
+  "precommit": {
+    "command": "uv tool run pre-commit run --all-files",
+    "environment": {
+      "UV_NO_SYNC": "1"
+    },
+    "skip_hooks": [],
+    "known_inherited_failure": "tests/export/tensorrt/test_tensorrt_int8.py (253 KB) exceeds 250 KB",
+    "unrelated_formatter_change_reverted": "CHANGELOG.md extra blank line; original upstream content retained"
+  },
+  "commits_before_report": [
+    {
+      "batch": "01-repository",
+      "commit": "7f30164974aacf694e18a8363e5458c6dc4a8ec6",
+      "files": [
+        ".gitignore",
+        ".pre-commit-config.yaml",
+        "reports/README.md"
+      ],
+      "precommit_log": "01-repository-precommit-1.log",
+      "known_upstream_check_failure": [
+        "check for added large files"
+      ],
+      "message_sha256": "d3eb0343ec3da4546094201f17edc27079dd334479206fa3d33f2e7ead8fb701"
+    },
+    {
+      "batch": "02-data",
+      "commit": "a1a77f32573ef78eb072f938f0fcc2906e84981d",
+      "files": [
+        "scripts/prepare_tomato_keypoints.py",
+        "tests/scripts/test_prepare_tomato_keypoints.py"
+      ],
+      "precommit_log": "02-data-precommit-2.log",
+      "known_upstream_check_failure": [
+        "check for added large files"
+      ],
+      "message_sha256": "9eadd9fad7ebce9593c394d111287e52cee4b961bcfff4f775fdc745d59a6e70"
+    },
+    {
+      "batch": "03-cldice",
+      "commit": "39e8af4646b07a8f29ec8714169b25e988fdc55d",
+      "files": [
+        "src/rfdetr/_namespace.py",
+        "src/rfdetr/config.py",
+        "src/rfdetr/models/_types.py",
+        "src/rfdetr/models/criterion.py",
+        "src/rfdetr/models/lwdetr.py",
+        "src/rfdetr/training/module_model.py",
+        "src/rfdetr/models/soft_cldice.py",
+        "tests/models/test_soft_cldice.py",
+        "tests/models/test_soft_cldice_integration.py",
+        "tests/models/test_lwdetr_cldice.py",
+        "tests/models/test_soft_cldice_cuda.py",
+        "tests/training/test_cldice_multiscale.py"
+      ],
+      "precommit_log": "03-cldice-precommit-2.log",
+      "known_upstream_check_failure": [
+        "check for added large files"
+      ],
+      "message_sha256": "7ee83a9733095c6e26cc38e883de293356d9426c5f9988b150238865d4e05940"
+    },
+    {
+      "batch": "04-query-points",
+      "commit": "22ed56c17ce4f191f39ea50d9896f968a0f06d4a",
+      "files": [
+        "src/rfdetr/config.py",
+        "src/rfdetr/inference.py",
+        "src/rfdetr/_namespace.py",
+        "src/rfdetr/datasets/coco.py",
+        "src/rfdetr/datasets/_aug_utils.py",
+        "src/rfdetr/models/criterion.py",
+        "src/rfdetr/models/lwdetr.py",
+        "src/rfdetr/models/postprocess.py",
+        "src/rfdetr/models/weights.py",
+        "src/rfdetr/models/_types.py",
+        "src/rfdetr/training/module_model.py",
+        "src/rfdetr/_prediction/core.py",
+        "tests/datasets/test_query_points.py",
+        "tests/inference/prediction/test_query_points.py",
+        "tests/models/test_query_points.py",
+        "tests/models/test_query_points_distributed.py"
+      ],
+      "precommit_log": "04-query-points-precommit-2.log",
+      "known_upstream_check_failure": [
+        "check for added large files"
+      ],
+      "message_sha256": "dfe3a0e1932d37aa46e10cc10e1f637f99177dd4a0557ec2d45907f9baf8fc6a"
+    },
+    {
+      "batch": "05-protocols",
+      "commit": "e19165360c0a3fb906af2ce72b05d24d2b811ea4",
+      "files": [
+        "AGENTS.md",
+        "configs/tomato/seg_small_baseline.yaml",
+        "configs/tomato/seg_small_cldice.yaml",
+        "configs/tomato/seg_small_query_point.yaml",
+        "docs/tomato_phase1.md",
+        "docs/tomato_modules.md",
+        "docs/tomato_e2_query_mlp_plan.md",
+        "docs/tomato_e2_implementation.md",
+        "docs/tomato_git_workflow.md"
+      ],
+      "precommit_log": "05-protocols-precommit-2.log",
+      "known_upstream_check_failure": [
+        "check for added large files"
+      ],
+      "message_sha256": "4eb91f31171b0f93916502355def2175c514a02eeeb22b79117fd93d641b349d"
+    }
+  ],
+  "validation_limits": [
+    "No GPU or full-backbone shared-gradient acceptance in this task",
+    "Windows symlink and Gloo tests use existing repository platform markers",
+    "Dedicated picking-point evaluation remains pending"
+  ]
+}

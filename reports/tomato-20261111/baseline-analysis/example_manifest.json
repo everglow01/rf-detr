@@ -1,0 +1,62 @@
+[
+  {
+    "image_id": 19,
+    "target_index": 5,
+    "file_name": "images/134_slice_1_png.rf.2f8b3758267868eefeeb5c178de0a412.jpg",
+    "crop_xyxy": [
+      81,
+      120,
+      230,
+      231
+    ],
+    "selection_reason": "High overlap"
+  },
+  {
+    "image_id": 134,
+    "target_index": 12,
+    "file_name": "images/tomato_20220725031_slice_1_png.rf.4f46e9fbb5953232363b275bb51e863f.jpg",
+    "crop_xyxy": [
+      197,
+      61,
+      281,
+      169
+    ],
+    "selection_reason": "High clDice, lower IoU"
+  },
+  {
+    "image_id": 40,
+    "target_index": 10,
+    "file_name": "images/239_slice_1_png.rf.3fb250ce1242cc008ac6c8df75beddd1.jpg",
+    "crop_xyxy": [
+      257,
+      0,
+      433,
+      147
+    ],
+    "selection_reason": "Partial prediction"
+  },
+  {
+    "image_id": 6,
+    "target_index": 11,
+    "file_name": "images/017480_0000_1185558000_1750391259483133_Color_1920x1080_slice_1_png.rf.777b189c17fa72360048b448097bd1c3.jpg",
+    "crop_xyxy": [
+      220,
+      25,
+      310,
+      146
+    ],
+    "selection_reason": "Best misses at score >= 0.30"
+  },
+  {
+    "image_id": 27,
+    "target_index": 10,
+    "file_name": "images/187_slice_1_png.rf.e11044115e20d2ec2871ccaf2b5e2822.jpg",
+    "crop_xyxy": [
+      73,
+      0,
+      360,
+      158
+    ],
+    "selection_reason": "Small isolated false region"
+  }
+]

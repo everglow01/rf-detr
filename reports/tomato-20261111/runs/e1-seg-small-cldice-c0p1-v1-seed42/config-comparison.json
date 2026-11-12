@@ -1,0 +1,32 @@
+{
+  "differences": [
+    {
+      "path": "/model/train_config/init_args/mask_cldice_class_ids",
+      "baseline": null,
+      "e1": [
+        1
+      ]
+    },
+    {
+      "path": "/model/train_config/init_args/mask_cldice_iterations",
+      "baseline": null,
+      "e1": 10
+    },
+    {
+      "path": "/model/train_config/init_args/mask_cldice_loss_coef",
+      "baseline": null,
+      "e1": 0.1
+    },
+    {
+      "path": "/model/train_config/init_args/output_dir",
+      "baseline": "/usr/local/rfdetr26/output/output1/baseline-seg-small-v1-seed42/training",
+      "e1": "/usr/local/rfdetr26/output/output1/e1-seg-small-cldice-c0p1-v1-seed42/training"
+    },
+    {
+      "path": "/trainer/callbacks/0/init_args/output_dir",
+      "baseline": "/usr/local/rfdetr26/output/output1/baseline-seg-small-v1-seed42/training",
+      "e1": "/usr/local/rfdetr26/output/output1/e1-seg-small-cldice-c0p1-v1-seed42/training"
+    }
+  ],
+  "benchmark_callback_identical": true
+}

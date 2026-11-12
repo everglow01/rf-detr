@@ -1,0 +1,502 @@
+[
+  {
+    "status": " M",
+    "path": ".gitignore",
+    "bytes": 4613
+  },
+  {
+    "status": " M",
+    "path": "AGENTS.md",
+    "bytes": 44891
+  },
+  {
+    "status": " M",
+    "path": "src/rfdetr/_namespace.py",
+    "bytes": 5876
+  },
+  {
+    "status": " M",
+    "path": "src/rfdetr/_prediction/core.py",
+    "bytes": 80233
+  },
+  {
+    "status": " M",
+    "path": "src/rfdetr/config.py",
+    "bytes": 98258
+  },
+  {
+    "status": " M",
+    "path": "src/rfdetr/datasets/_aug_utils.py",
+    "bytes": 8742
+  },
+  {
+    "status": " M",
+    "path": "src/rfdetr/datasets/coco.py",
+    "bytes": 85902
+  },
+  {
+    "status": " M",
+    "path": "src/rfdetr/inference.py",
+    "bytes": 25617
+  },
+  {
+    "status": " M",
+    "path": "src/rfdetr/models/_types.py",
+    "bytes": 4253
+  },
+  {
+    "status": " M",
+    "path": "src/rfdetr/models/criterion.py",
+    "bytes": 78476
+  },
+  {
+    "status": " M",
+    "path": "src/rfdetr/models/lwdetr.py",
+    "bytes": 54691
+  },
+  {
+    "status": " M",
+    "path": "src/rfdetr/models/postprocess.py",
+    "bytes": 32926
+  },
+  {
+    "status": " M",
+    "path": "src/rfdetr/models/weights.py",
+    "bytes": 41611
+  },
+  {
+    "status": " M",
+    "path": "src/rfdetr/training/module_model.py",
+    "bytes": 119423
+  },
+  {
+    "status": "??",
+    "path": "configs/tomato/seg_small_baseline.yaml",
+    "bytes": 1973
+  },
+  {
+    "status": "??",
+    "path": "configs/tomato/seg_small_cldice.yaml",
+    "bytes": 2145
+  },
+  {
+    "status": "??",
+    "path": "configs/tomato/seg_small_query_point.yaml",
+    "bytes": 2128
+  },
+  {
+    "status": "??",
+    "path": "docs/tomato_e2_implementation.md",
+    "bytes": 4674
+  },
+  {
+    "status": "??",
+    "path": "docs/tomato_e2_query_mlp_plan.md",
+    "bytes": 11959
+  },
+  {
+    "status": "??",
+    "path": "docs/tomato_git_workflow.md",
+    "bytes": 2359
+  },
+  {
+    "status": "??",
+    "path": "docs/tomato_modules.md",
+    "bytes": 9824
+  },
+  {
+    "status": "??",
+    "path": "docs/tomato_phase1.md",
+    "bytes": 6707
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/README.md",
+    "bytes": 906
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/archive_manifest.json",
+    "bytes": 8432
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/baseline-analysis/analyze_logs.py",
+    "bytes": 4241
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/baseline-analysis/baseline_analysis.md",
+    "bytes": 9669
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/baseline-analysis/baseline_curves.pdf",
+    "bytes": 29874
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/baseline-analysis/baseline_curves.png",
+    "bytes": 264206
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/baseline-analysis/epoch_metrics.csv",
+    "bytes": 143961
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/baseline-analysis/evaluate_stems.py",
+    "bytes": 9159
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/baseline-analysis/example_manifest.json",
+    "bytes": 1327
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/baseline-analysis/raw/config.yaml",
+    "bytes": 5659
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/baseline-analysis/raw/metrics.csv",
+    "bytes": 171834
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/baseline-analysis/raw/process-results.json",
+    "bytes": 726
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/baseline-analysis/raw/provenance.json",
+    "bytes": 452
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/baseline-analysis/raw/timing.rank0.json",
+    "bytes": 74853
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/baseline-analysis/render_examples.py",
+    "bytes": 4204
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/baseline-analysis/results/best_epoch63/stem_instances.json",
+    "bytes": 31610
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/baseline-analysis/results/best_epoch63/stem_predictions.json",
+    "bytes": 70572
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/baseline-analysis/results/best_epoch63/summary.json",
+    "bytes": 2868
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/baseline-analysis/results/last_epoch100/stem_instances.json",
+    "bytes": 31580
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/baseline-analysis/results/last_epoch100/stem_predictions.json",
+    "bytes": 69847
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/baseline-analysis/results/last_epoch100/summary.json",
+    "bytes": 2865
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/baseline-analysis/stem_examples.png",
+    "bytes": 857107
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/baseline-analysis/training_summary.json",
+    "bytes": 38841
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/e2_query_mlp_plan.md",
+    "bytes": 11709
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/README.md",
+    "bytes": 2731
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/benchmark_callbacks.py",
+    "bytes": 5789
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/config-comparison.json",
+    "bytes": 995
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/cpu-regression.xml",
+    "bytes": 8242
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/launch_status.json",
+    "bytes": 592
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/preflight-attempt1-job.json",
+    "bytes": 1033
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/preflight-attempt2-job.json",
+    "bytes": 1033
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/preflight-attempt3-job.json",
+    "bytes": 1033
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/preflight-job.json",
+    "bytes": 1033
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/preflight.attempt1.yaml",
+    "bytes": 2263
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/preflight.yaml",
+    "bytes": 2232
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/preflight/preflight.rank0.json",
+    "bytes": 640
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/preflight/preflight.rank1.json",
+    "bytes": 640
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/preflight_callbacks.py",
+    "bytes": 2570
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/prepared-manifest.json",
+    "bytes": 626
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/provenance.json",
+    "bytes": 919
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/run_bundle.tar.gz",
+    "bytes": 972776
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/run_bundle_v2.tar.gz",
+    "bytes": 973686
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/run_bundle_v3.tar.gz",
+    "bytes": 973591
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/run_bundle_v4.tar.gz",
+    "bytes": 975939
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/run_e1.py",
+    "bytes": 5162
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/runtime-regression.xml",
+    "bytes": 1342
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/runtime_validation.md",
+    "bytes": 3437
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/source.tar.gz",
+    "bytes": 952765
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/source.v1.tar.gz",
+    "bytes": 950460
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/source_changes.patch",
+    "bytes": 18467
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/source_changes.v1.patch",
+    "bytes": 16052
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/source_manifest.json",
+    "bytes": 20511
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/source_manifest.v1.json",
+    "bytes": 20280
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/training-job.json",
+    "bytes": 988
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/training-regression.xml",
+    "bytes": 1243
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/training.yaml",
+    "bytes": 2193
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/training/metrics.csv",
+    "bytes": 10003
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/training/process.json",
+    "bytes": 769
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/training/timing.rank0.json",
+    "bytes": 4225
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42/training/timing.rank1.json",
+    "bytes": 4225
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261112-code-review/README.md",
+    "bytes": 4409
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261112-code-review/checks.json",
+    "bytes": 1745
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261112-code-review/commit-message.txt",
+    "bytes": 766
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261112-code-review/e2-files.json",
+    "bytes": 5262
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261112-code-review/e2-only.patch",
+    "bytes": 47376
+  },
+  {
+    "status": "??",
+    "path": "reports/tomato-20261112-code-review/previous-green1-job.json",
+    "bytes": 867
+  },
+  {
+    "status": "??",
+    "path": "scripts/prepare_tomato_keypoints.py",
+    "bytes": 11831
+  },
+  {
+    "status": "??",
+    "path": "src/rfdetr/models/soft_cldice.py",
+    "bytes": 5084
+  },
+  {
+    "status": "??",
+    "path": "tests/datasets/test_query_points.py",
+    "bytes": 4801
+  },
+  {
+    "status": "??",
+    "path": "tests/inference/prediction/test_query_points.py",
+    "bytes": 2132
+  },
+  {
+    "status": "??",
+    "path": "tests/models/test_lwdetr_cldice.py",
+    "bytes": 4353
+  },
+  {
+    "status": "??",
+    "path": "tests/models/test_query_points.py",
+    "bytes": 8480
+  },
+  {
+    "status": "??",
+    "path": "tests/models/test_query_points_distributed.py",
+    "bytes": 3138
+  },
+  {
+    "status": "??",
+    "path": "tests/models/test_soft_cldice.py",
+    "bytes": 6754
+  },
+  {
+    "status": "??",
+    "path": "tests/models/test_soft_cldice_cuda.py",
+    "bytes": 2661
+  },
+  {
+    "status": "??",
+    "path": "tests/models/test_soft_cldice_integration.py",
+    "bytes": 19169
+  },
+  {
+    "status": "??",
+    "path": "tests/scripts/test_prepare_tomato_keypoints.py",
+    "bytes": 9034
+  },
+  {
+    "status": "??",
+    "path": "tests/training/test_cldice_multiscale.py",
+    "bytes": 4185
+  }
+]

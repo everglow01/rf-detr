@@ -1,0 +1,13 @@
+{
+  "base_commit": "a459eeade6387927c599a50f287a319a19d7ae82",
+  "source_manifest_sha256": "1f56cda2bd9d2b3ad5febcc08564f7176e2cc54887492f57d6a770d90033b4bd",
+  "source_matches_previously_validated_copy": false,
+  "inputs_sha256": {
+    "/usr/local/rfdetr26/checkpoint/pretrained/rf-detr-seg-small.pt": "6de3da31b2572cac214a1c76cce4a92a13966d56390ac2b3a3de9a8dc2b2bca3",
+    "/usr/local/rfdetr26/data/0/TOMATO.v7i.rfdetr-keypoints-v1/train/_annotations.coco.json": "b16ddd958962eba4fc4b1aff77924607f343e76409a666a5edf1b3737e1db5df",
+    "/usr/local/rfdetr26/data/0/TOMATO.v7i.rfdetr-keypoints-v1/valid/_annotations.coco.json": "9efa84f86e2645ee545a476c8b22fb7f666575b04d6ff12accb5b62fd5732dff"
+  },
+  "formal_training_authorized": true,
+  "weights_retained": true,
+  "revision_note": "Align CPU matcher indices to target device; retain pre-resize padding for clDice supervision under per-batch multiscale"
+}

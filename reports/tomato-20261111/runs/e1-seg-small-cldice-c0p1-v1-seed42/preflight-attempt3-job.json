@@ -1,0 +1,18 @@
+{
+  "id": "20261111-210645-6f99",
+  "name": "tomato-e1-cldice-preflight",
+  "command": "flock -n /usr/local/rfdetr26/output/output1/e1-seg-small-cldice-c0p1-v1-seed42/run.lock /usr/local/rfdetr26/.venv/bin/python -B -m torch.distributed.run --standalone --nnodes=1 --nproc_per_node=2 --module rfdetr fit --config /usr/local/rfdetr26/output/output1/e1-seg-small-cldice-c0p1-v1-seed42/preflight.yaml > /usr/local/rfdetr26/output/output1/e1-seg-small-cldice-c0p1-v1-seed42/preflight.log 2>&1",
+  "cwd": "/usr/local/rfdetr26",
+  "env": {
+    "CUDA_VISIBLE_DEVICES": "0,1",
+    "PYTHONPATH": "/usr/local/rfdetr26/output/output1/e1-seg-small-cldice-c0p1-v1-seed42:/usr/local/rfdetr26/output/output1/e1-seg-small-cldice-c0p1-v1-seed42/source/src",
+    "OMP_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "TOKENIZERS_PARALLELISM": "false",
+    "PYTHONUNBUFFERED": "1",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "RFDETR_SKIP_DINOV2_PREWARM": "1"
+  },
+  "created_at": "2026-11-11 21:06:45"
+}

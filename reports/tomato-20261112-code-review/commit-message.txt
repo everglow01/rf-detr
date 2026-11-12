@@ -1,0 +1,14 @@
+chore(tomato): checkpoint E1 implementation and E2 query-point draft
+
+Add optional stem-only soft-clDice with CPU/GPU index and multiscale alignment
+fixes, tomato baseline/ablation configs, keypoint preparation and E0/E1 reports.
+
+Prepare a default-off final-query point MLP, visible matched-stem L1 loss and
+joint mask/point inference. Keep GroupPose disabled and shared gradients intact.
+Add targeted tests and document the remaining E2 runtime/evaluation work.
+
+Restore the canonical rfdetr26 checkout and GitHub-to-server pull workflow.
+Document the historical uploaded E1 snapshot without assigning it a later commit.
+
+Validation: see reports/tomato-20261112-code-review/README.md.
+E2 is a development draft; current-version dynamic acceptance remains pending.

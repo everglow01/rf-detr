@@ -1,0 +1,7 @@
+{
+  "git_commit": "a459eeade6387927c599a50f287a319a19d7ae82",
+  "pretrained_sha256": "6de3da31b2572cac214a1c76cce4a92a13966d56390ac2b3a3de9a8dc2b2bca3",
+  "dataset_release_sha256": "64e33afb2a12667942e1052ea57f89bfe56a0767bcea96c7e901045660ea6e12",
+  "dataset_release_path": "/usr/local/rfdetr26/data/0/TOMATO.v7i.rfdetr-keypoints-v1/release.json",
+  "source_archive_sha256": "dd51dddd250260eef1b2f4ca0e3333591ad11827a88f50dd1e1943a476dfd8e3"
+}

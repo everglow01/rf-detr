@@ -1,0 +1,26 @@
+[
+  {
+    "label": "training",
+    "devices": 2,
+    "cuda_visible_devices": "0,1",
+    "started_at_utc": "2026-11-11T09:26:59.013303+00:00",
+    "command": [
+      "/usr/local/rfdetr26/.venv/bin/python",
+      "-B",
+      "-m",
+      "torch.distributed.run",
+      "--standalone",
+      "--nnodes=1",
+      "--nproc_per_node=2",
+      "--module",
+      "rfdetr",
+      "fit",
+      "--config",
+      "/usr/local/rfdetr26/output/output1/baseline-seg-small-v1-seed42/training.yaml"
+    ],
+    "config_sha256": "1c3ab3fb777828a30fe662fd060d5e3d268752bc1be1c1d2693482c34f996762",
+    "exit_code": 0,
+    "wall_seconds": 4562.349300357513,
+    "finished_at_utc": "2026-11-11T10:43:01.362623+00:00"
+  }
+]

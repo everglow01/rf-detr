@@ -1,0 +1,13 @@
+{
+  "status": "launched",
+  "source_manifest_sha256": "1f56cda2bd9d2b3ad5febcc08564f7176e2cc54887492f57d6a770d90033b4bd",
+  "formal_training_started": true,
+  "gpu_nccl_preflight": "passed",
+  "job_id": "20261112-085259-9638",
+  "files": {
+    "training.yaml": "e2ce54f4144355467ed4cf448dc3588d33ec7e05451030311ba15810a82b625a",
+    "run_e1.py": "9be8571cf8159b8ec2d73a69b610942b27b1a92f2c472d70f393d2cafc6151f9",
+    "benchmark_callbacks.py": "e33aa6075e07129fca4539f0fbadbae0821f086db1b21d193f6a1cae3e44fa83",
+    "config-comparison.json": "a1168f8decf2dae383e839bdeea57313d50b25d29d5ac901ac20e488c8419761"
+  }
+}

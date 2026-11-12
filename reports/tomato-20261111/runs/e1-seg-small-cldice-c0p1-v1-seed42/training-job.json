@@ -1,0 +1,18 @@
+{
+  "id": "20261112-085259-9638",
+  "name": "tomato-e1-cldice-training",
+  "command": "flock -n /usr/local/rfdetr26/output/output1/e1-seg-small-cldice-c0p1-v1-seed42/run.lock /usr/local/rfdetr26/.venv/bin/python -B /usr/local/rfdetr26/output/output1/e1-seg-small-cldice-c0p1-v1-seed42/run_e1.py --expected-commit a459eeade6387927c599a50f287a319a19d7ae82 --expected-source-sha256 1f56cda2bd9d2b3ad5febcc08564f7176e2cc54887492f57d6a770d90033b4bd",
+  "cwd": "/usr/local/rfdetr26",
+  "env": {
+    "CUDA_VISIBLE_DEVICES": "0,1",
+    "PYTHONPATH": "/usr/local/rfdetr26/output/output1/e1-seg-small-cldice-c0p1-v1-seed42:/usr/local/rfdetr26/output/output1/e1-seg-small-cldice-c0p1-v1-seed42/source/src",
+    "OMP_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "TOKENIZERS_PARALLELISM": "false",
+    "PYTHONUNBUFFERED": "1",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "RFDETR_SKIP_DINOV2_PREWARM": "1"
+  },
+  "created_at": "2026-11-12 08:52:59"
+}
