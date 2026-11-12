@@ -7,7 +7,8 @@
 
 Run as ``python -m scripts.diagnose_cldice_dedup`` from the repository root. The legacy criterion is loaded from the
 immutable E1 archive, while all model and dataset code comes from the checked-out Git revision. K=25 stages run only
-after K=10 scalar/gradient parity succeeds on every selected batch.
+after exact K=10 loss/mask-input-gradient parity succeeds on every selected batch. Shared-network backward repeatability
+is measured separately because CUDA grid_sample does not support deterministic backward.
 """
 
 from __future__ import annotations
@@ -209,6 +210,8 @@ def compare_gradients(module: Any, dataset: CocoDetection, other: Any, args: Any
             matched["indices"] = indices
             return new_loss(outputs, truth, indices)
 
+        if parity:
+            torch.use_deterministic_algorithms(True)
         torch.manual_seed(7000 + bi)
         with patch("rfdetr.models.criterion._soft_skeleton", wraps=_soft_skeleton) as spy:
             with patch.object(module.criterion, "loss_mask_cldice", side_effect=capture):
@@ -239,7 +242,10 @@ def compare_gradients(module: Any, dataset: CocoDetection, other: Any, args: Any
                 boundary_difference = gradient_difference(boundary_first, boundary_second)
                 for left, right in zip(boundary_first, boundary_second, strict=True):
                     if left is not None:
-                        torch.testing.assert_close(left, right, atol=1e-7, rtol=1e-5)
+                        torch.testing.assert_close(left, right, atol=0, rtol=0)
+                # The adapter's complete input Jacobian is now checked. CUDA grid_sample
+                # in the unchanged shared network has no deterministic backward kernel.
+                torch.use_deterministic_algorithms(False)
             original_grad = cpu_grads(native, params, retain_graph=True) if not parity else None
             first_grad = cpu_grads(current, params, retain_graph=True)
             first_repeat = cpu_grads(current, params, retain_graph=True) if parity else None
@@ -250,7 +256,7 @@ def compare_gradients(module: Any, dataset: CocoDetection, other: Any, args: Any
             assert torch.equal(cuda_rng_before, torch.cuda.get_rng_state())
         difference = gradient_difference(first_grad, second_grad)
         if parity:
-            torch.testing.assert_close(current, alternate, atol=1e-7, rtol=1e-6)
+            torch.testing.assert_close(current, alternate, atol=0, rtol=0)
         row = dict(
             batch=bi,
             **meta,
@@ -262,7 +268,9 @@ def compare_gradients(module: Any, dataset: CocoDetection, other: Any, args: Any
         if parity:
             assert first_repeat is not None and second_repeat is not None
             row["mask_input_gradient"] = boundary_difference
-            row["parity_control"] = verify_gradient_parity(first_grad, first_repeat, second_grad, second_repeat)
+            row["shared_parameter_repeatability"] = verify_gradient_parity(
+                first_grad, first_repeat, second_grad, second_repeat
+            )
         if original_grad is not None:
             row["groups"] = {
                 name: dict(
@@ -275,7 +283,7 @@ def compare_gradients(module: Any, dataset: CocoDetection, other: Any, args: Any
         rows.append(row)
         write_json(args.output / f"{label}.json", rows)
         if parity:
-            assert row["parity_control"]["passed"], json.dumps(row["parity_control"])
+            assert row["mask_input_gradient"]["bitwise_equal"]
         print(
             json.dumps(
                 dict(
@@ -448,7 +456,8 @@ def main() -> None:
             arguments={k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()},
             sha256={str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths},
             bf16=True,
-            deterministic_parity=True,
+            deterministic_mask_input_parity=True,
+            deterministic_shared_backward=False,
             deterministic_benchmark=torch.are_deterministic_algorithms_enabled(),
             coefficient=0.1,
             iterations={"legacy": 10, "deduplicated": [10, 25], "prediction_mass_reference": [50, 75]},
@@ -468,15 +477,20 @@ def main() -> None:
     k25 = copy.copy(module.criterion)
     k25.mask_cldice_iterations = 25
     begin = time.monotonic()
-    # Isolate mathematical parity from nondeterministic CUDA accumulation. Restore the
-    # process setting before K=25 probes/timing so the benchmark retains training kernels.
+    # Exact parity at every input of the modified adapter implies equal shared-parameter
+    # derivatives by the chain rule. Record stochastic CUDA backward separately, then
+    # restore training kernels before K=25 probes and timing.
     deterministic = torch.are_deterministic_algorithms_enabled()
-    torch.use_deterministic_algorithms(True)
     try:
         compare_gradients(module, dataset, old, args, parity=True)
     finally:
         torch.use_deterministic_algorithms(deterministic)
-    write_json(args.output / "equivalence_passed.json", dict(passed=True, batches=args.batches))
+    write_json(
+        args.output / "equivalence_passed.json",
+        dict(
+            passed=True, batches=args.batches, scope="exact_loss_and_all_mask_input_gradients", shared_backward="noisy"
+        ),
+    )
     coverage_k25(dataset, args)
     compare_gradients(module, dataset, k25, args, parity=False)
     benchmark(module, dataset, old, k25, args)
