@@ -230,6 +230,16 @@ def compare_gradients(module: Any, dataset: CocoDetection, other: Any, args: Any
                     if k in module.criterion.weight_dict and k != "loss_mask_cldice"
                 ]
             ).sum()
+            boundary_difference = None
+            if parity:
+                pred = outputs["pred_masks"]
+                boundary = [pred] if isinstance(pred, Tensor) else list(pred.values())
+                boundary_first = cpu_grads(current, boundary, retain_graph=True)
+                boundary_second = cpu_grads(alternate, boundary, retain_graph=True)
+                boundary_difference = gradient_difference(boundary_first, boundary_second)
+                for left, right in zip(boundary_first, boundary_second, strict=True):
+                    if left is not None:
+                        torch.testing.assert_close(left, right, atol=1e-7, rtol=1e-5)
             original_grad = cpu_grads(native, params, retain_graph=True) if not parity else None
             first_grad = cpu_grads(current, params, retain_graph=True)
             first_repeat = cpu_grads(current, params, retain_graph=True) if parity else None
@@ -251,6 +261,7 @@ def compare_gradients(module: Any, dataset: CocoDetection, other: Any, args: Any
         )
         if parity:
             assert first_repeat is not None and second_repeat is not None
+            row["mask_input_gradient"] = boundary_difference
             row["parity_control"] = verify_gradient_parity(first_grad, first_repeat, second_grad, second_repeat)
         if original_grad is not None:
             row["groups"] = {
@@ -437,6 +448,8 @@ def main() -> None:
             arguments={k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()},
             sha256={str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths},
             bf16=True,
+            deterministic_parity=True,
+            deterministic_benchmark=torch.are_deterministic_algorithms_enabled(),
             coefficient=0.1,
             iterations={"legacy": 10, "deduplicated": [10, 25], "prediction_mass_reference": [50, 75]},
             class_ids=[1],
@@ -455,7 +468,14 @@ def main() -> None:
     k25 = copy.copy(module.criterion)
     k25.mask_cldice_iterations = 25
     begin = time.monotonic()
-    compare_gradients(module, dataset, old, args, parity=True)
+    # Isolate mathematical parity from nondeterministic CUDA accumulation. Restore the
+    # process setting before K=25 probes/timing so the benchmark retains training kernels.
+    deterministic = torch.are_deterministic_algorithms_enabled()
+    torch.use_deterministic_algorithms(True)
+    try:
+        compare_gradients(module, dataset, old, args, parity=True)
+    finally:
+        torch.use_deterministic_algorithms(deterministic)
     write_json(args.output / "equivalence_passed.json", dict(passed=True, batches=args.batches))
     coverage_k25(dataset, args)
     compare_gradients(module, dataset, k25, args, parity=False)
