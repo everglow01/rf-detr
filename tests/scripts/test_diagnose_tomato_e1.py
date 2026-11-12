@@ -6,6 +6,7 @@
 """Small mathematical checks for the read-only E1 diagnostic."""
 
 import importlib.util
+from argparse import Namespace
 from pathlib import Path
 
 import pytest
@@ -73,3 +74,15 @@ def test_greedy_matching_does_not_reuse_target():
         torch.tensor([[0.9, 0.1], [0.8, 0.7]]), torch.tensor([0.9, 0.8]), torch.tensor([True, True]), 0.3
     )
     assert result == {0: 0, 1: 1}
+
+
+def test_saved_cli_enum_names_are_resolved(tmp_path):
+    """Frozen CLI YAML enum member names must retain the original recipe."""
+    path = tmp_path / "training.yaml"
+    path.write_text(
+        "model:\n  model_config:\n    init_args: {}\n  train_config:\n    init_args:\n"
+        "      dataset_dir: unused\n      multi_scale: PER_BATCH\n      augmentation_backend: TV\n"
+    )
+    _, tc = diagnose.configurations(Namespace(config=path, checkpoint=None, output=tmp_path / "out"))
+    assert tc.multi_scale.value == "per-batch"
+    assert tc.augmentation_backend.value == "torchvision"

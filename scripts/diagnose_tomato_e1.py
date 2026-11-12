@@ -30,7 +30,7 @@ from PIL import Image
 from torch import Tensor
 
 import rfdetr
-from rfdetr.config import RFDETRSegSmallConfig, SegmentationTrainConfig
+from rfdetr.config import AugmentationBackend, MultiScale, RFDETRSegSmallConfig, SegmentationTrainConfig
 from rfdetr.datasets.coco import CocoDetection
 from rfdetr.models.soft_cldice import _soft_erode, _soft_skeleton
 from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
@@ -118,6 +118,9 @@ def configurations(args: argparse.Namespace) -> tuple[RFDETRSegSmallConfig, Segm
         mc["pretrain_weights"] = str(args.checkpoint)
     mc["device"] = "cuda"
     tc = dict(cfg["train_config"]["init_args"])
+    for key, enum in (("multi_scale", MultiScale), ("augmentation_backend", AugmentationBackend)):
+        if tc.get(key) in enum.__members__:
+            tc[key] = enum[tc[key]]
     tc.update(
         devices=1,
         strategy="auto",
