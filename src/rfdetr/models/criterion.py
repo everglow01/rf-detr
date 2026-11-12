@@ -546,6 +546,7 @@ class SetCriterion(nn.Module):
         num_keypoints_per_class: list[int] | None = None,
         mask_cldice_class_ids: list[int] | None = None,
         mask_cldice_iterations: int = 10,
+        query_point_class_ids: list[int] | None = None,
     ) -> None:
         """Create the criterion.
 
@@ -558,6 +559,7 @@ class SetCriterion(nn.Module):
             group_detr: Number of groups to speed detr training. Default is 1.
             mask_cldice_class_ids: GT classes selected for the optional final-layer topology loss.
             mask_cldice_iterations: Number of additional soft-skeleton erosion steps.
+            query_point_class_ids: GT classes receiving one visible point coordinate loss per final match.
         """
         super().__init__()
         self.num_classes = num_classes
@@ -572,6 +574,12 @@ class SetCriterion(nn.Module):
         self.ia_bce_loss = ia_bce_loss
         self.mask_point_sample_ratio = mask_point_sample_ratio
         self.num_keypoints_per_class = num_keypoints_per_class or []
+        self.query_point_class_ids = tuple(query_point_class_ids or [])
+        if "loss_query_point" in weight_dict:
+            if not self.query_point_class_ids or any(c < 0 or c >= num_classes for c in self.query_point_class_ids):
+                raise ValueError("query_point_head requires valid query_point_class_ids")
+            if sum_group_losses:
+                raise ValueError("query_point_head requires sum_group_losses=False (group averaging)")
         self.mask_cldice_class_ids = tuple(mask_cldice_class_ids or [])
         self.mask_cldice_iterations = mask_cldice_iterations
         if weight_dict.get("loss_mask_cldice", 0.0) > 0:
@@ -1040,6 +1048,42 @@ class SetCriterion(nn.Module):
         aligned = aligned.masked_fill(padding[:height, :width], -torch.inf)
         return soft_cldice_loss(aligned, masks, iterations=self.mask_cldice_iterations).sum()
 
+    def loss_query_point(
+        self,
+        outputs: dict[str, Any],
+        targets: list[dict[str, Tensor]],
+        indices: list[tuple[Tensor, Tensor]],
+    ) -> dict[str, Tensor]:
+        """Average normalized xy L1 over visible selected-class final-layer matches.
+
+        Count Group DETR repeats explicitly. Reduce counts on every DDP rank and clamp before world-size division, so an
+        empty rank does not dilute the other rank. Empty batches still connect the entire point head to the shared
+        feature graph.
+        """
+        predictions = outputs["pred_pick_points"]
+        numerator = predictions[..., :0].sum().float()
+        count = predictions.new_zeros((), dtype=torch.float32)
+        for batch_index, (target, (source_indices, target_indices)) in enumerate(zip(targets, indices, strict=True)):
+            if "keypoints" not in target or target["keypoints"].shape[1:] != (1, 3):
+                raise ValueError("query_point_head requires keypoints with shape (N, 1, 3)")
+            device = target["labels"].device
+            source_indices, target_indices = source_indices.to(device), target_indices.to(device)
+            labels = target["labels"][target_indices]
+            points = target["keypoints"][target_indices, 0]
+            selected = torch.zeros_like(labels, dtype=torch.bool)
+            for class_id in self.query_point_class_ids:
+                selected |= labels == class_id
+            selected &= points[:, 2] > 0
+            if "valid" in target:
+                selected &= target["valid"][target_indices]
+            pred = predictions[batch_index, source_indices[selected]].float()
+            truth = points[selected, :2].float()
+            numerator = numerator + F.l1_loss(pred, truth, reduction="none").mean(-1).sum()
+            count = count + selected.sum()
+        if is_dist_avail_and_initialized():
+            torch.distributed.all_reduce(count)
+        return {"loss_query_point": numerator / (count.clamp(min=1) / get_world_size())}
+
     def loss_mask_cldice(
         self,
         outputs: dict[str, Any],
@@ -1435,6 +1479,8 @@ class SetCriterion(nn.Module):
             >>> criterion.forward(outputs, targets, num_boxes=1.0)
             {}
         """
+        if "loss_query_point" in self.weight_dict and num_boxes is not None:
+            raise ValueError("query-point loss has a separate count normalizer; num_boxes overrides are unsupported")
         if self.weight_dict.get("loss_mask_cldice", 0.0) > 0 and num_boxes is not None:
             raise ValueError("soft-clDice has a separate stem-count normalizer; num_boxes overrides are unsupported")
         group_detr = self.group_detr if self.training else 1
@@ -1538,4 +1584,6 @@ class SetCriterion(nn.Module):
 
         if self.weight_dict.get("loss_mask_cldice", 0.0) > 0:
             losses.update(self.loss_mask_cldice(outputs_without_aux, targets, all_indices[0]))
+        if "loss_query_point" in self.weight_dict:
+            losses.update(self.loss_query_point(outputs_without_aux, targets, all_indices[0]))
         return losses

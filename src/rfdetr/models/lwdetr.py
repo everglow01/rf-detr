@@ -134,6 +134,7 @@ class LWDETR(nn.Module):
         num_keypoints_per_class: list[int] | None = None,
         grouppose_keypoint_dim_downscale: int = 1,
         mask_cldice_enabled: bool = False,
+        query_point_head: bool = False,
     ) -> None:
         """Initializes the model.
 
@@ -147,6 +148,7 @@ class LWDETR(nn.Module):
             group_detr: Number of groups to speed detr training. Default is 1.
             lite_refpoint_refine: TODO
             mask_cldice_enabled: Include input padding in training loss outputs for soft-clDice.
+            query_point_head: Attach a coordinate-only MLP to final decoder queries, independently of GroupPose.
         """
         super().__init__()
         self.num_queries = num_queries
@@ -229,6 +231,14 @@ class LWDETR(nn.Module):
                 self.transformer.enc_out_keypoint_embed = nn.ModuleList(
                     [copy.deepcopy(self.keypoint_embed) for _ in range(group_detr)]
                 )
+
+        self.query_point_embed: MLP | None = None
+        if query_point_head:
+            if segmentation_head is None or use_grouppose_keypoints:
+                raise ValueError("query_point_head requires segmentation without GroupPose")
+            # Head initialization must not advance the shared model/training RNG stream.
+            with torch.random.fork_rng(devices=[]):
+                self.query_point_embed = MLP(hidden_dim, hidden_dim, 2, 3)
 
         self._export = False
 
@@ -353,6 +363,8 @@ class LWDETR(nn.Module):
                 _reset_keypoint_gaussian_output_rows(keypoint_embed)
 
     def export(self) -> None:
+        if self.query_point_embed is not None:
+            raise NotImplementedError("Export of the query-point head is not supported yet")
         self._export = True
         self._forward_origin = self.forward
         self.forward = self.forward_export  # type: ignore[method-assign,assignment]
@@ -603,6 +615,8 @@ class LWDETR(nn.Module):
             out = {"pred_logits": outputs_class[-1], "pred_boxes": outputs_coord[-1]}
             if self.segmentation_head is not None:
                 out["pred_masks"] = outputs_masks[-1]
+            if self.query_point_embed is not None:
+                out["pred_pick_points"] = self.query_point_embed(hs[-1]).sigmoid()
             if outputs_keypoints is not None:
                 out["pred_keypoints"] = outputs_keypoints[-1]
             if self.aux_loss:
@@ -662,6 +676,9 @@ class LWDETR(nn.Module):
                 if keypoints_enc is not None:
                     out["pred_keypoints"] = keypoints_enc
 
+        if self.query_point_embed is not None and hs is None:
+            raise ValueError("query_point_head requires a final decoder query layer")
+
         if self.mask_cldice_enabled and (self.training or all_layer_masks):
             # Preserve the actual input canvas, including backbone block-size padding.
             out["mask_padding"] = (
@@ -686,6 +703,8 @@ class LWDETR(nn.Module):
             ``(boxes, logits)`` for detection, ``(boxes, logits, masks)`` for segmentation, or
             ``(boxes, logits, keypoints)`` for keypoint models.
         """
+        if self.query_point_embed is not None:
+            raise NotImplementedError("Export of the query-point head is not supported yet")
         srcs, _, poss, cross_attn_srcs = self.backbone(tensors)
         # only use one group in inference
         refpoint_embed_weight = self.refpoint_embed.weight[: self.num_queries]
@@ -931,6 +950,7 @@ def build_model(args: "BuilderArgs") -> LWDETR | tuple[Any, None, None]:
         num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
         grouppose_keypoint_dim_downscale=getattr(args, "grouppose_keypoint_dim_downscale", 1),
         mask_cldice_enabled=getattr(args, "mask_cldice_loss_coef", 0.0) > 0,
+        query_point_head=getattr(args, "query_point_head", False),
     )
     return model
 
@@ -958,6 +978,12 @@ def build_criterion_and_postprocessors(args: "BuilderArgs") -> tuple[SetCriterio
         if args.two_stage:
             aux_weight_dict.update({k + "_enc": v for k, v in weight_dict.items()})
         weight_dict.update(aux_weight_dict)
+
+    if getattr(args, "query_point_head", False):
+        if not args.segmentation_head or has_keypoints:
+            raise ValueError("query_point_head requires segmentation without GroupPose")
+        # Keep the original matcher and all auxiliary/encoder weights unchanged.
+        weight_dict["loss_query_point"] = getattr(args, "query_point_loss_coef", 1.0)
 
     cldice_coef = getattr(args, "mask_cldice_loss_coef", 0.0)
     if cldice_coef > 0:
@@ -991,6 +1017,7 @@ def build_criterion_and_postprocessors(args: "BuilderArgs") -> tuple[SetCriterio
             mask_point_sample_ratio=args.mask_point_sample_ratio,
             mask_cldice_class_ids=getattr(args, "mask_cldice_class_ids", []),
             mask_cldice_iterations=getattr(args, "mask_cldice_iterations", 10),
+            query_point_class_ids=getattr(args, "query_point_class_ids", []),
             num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
         )
     else:
@@ -1010,6 +1037,7 @@ def build_criterion_and_postprocessors(args: "BuilderArgs") -> tuple[SetCriterio
     criterion.to(device)
     postprocess = PostProcess(
         num_select=args.num_select,
+        query_point_class_ids=getattr(args, "query_point_class_ids", []),
         num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
         # Older detection-only namespaces may omit keypoint postprocess knobs; keep the ModelConfig default.
         trace_alpha=getattr(args, "postprocess_trace_alpha", 0.2),

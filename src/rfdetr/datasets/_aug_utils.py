@@ -46,6 +46,10 @@ def resolve_keypoint_flip_pairs(args: Any, *, include_keypoints: bool) -> list[i
         ``None`` for detection-only pipelines, otherwise the resolved flip-pair
         list (possibly empty).
     """
+    # A single picking point has no left/right slots to swap. Keep the detection
+    # augmentation recipe; geometric transforms still update its xy/visibility.
+    if getattr(args, "query_point_head", False):
+        return None
     return (getattr(args, "keypoint_flip_pairs", []) or []) if include_keypoints else None
 
 

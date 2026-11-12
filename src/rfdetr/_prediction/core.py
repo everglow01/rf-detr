@@ -1324,6 +1324,8 @@ def _decode_batch(prepared: _PreparedBatch, predictions: dict[str, torch.Tensor]
         # diverges from its transfer/consume counterparts would otherwise carry the *previous*
         # image's tensor forward instead of raising. Rebinding every iteration makes that failure
         # mode a loud AttributeError/TypeError on the stale `None` instead of a silent wrong value.
+        pick_points = result["pick_points"][keep_idx] if "pick_points" in result else None
+        pick_point_valid = result["pick_point_valid"][keep_idx] if pick_points is not None else None
         keypoints = result["keypoints"][keep_idx] if has_keypoints_result else None
         masks = result["masks"] if has_masks else None
         # PostProcess already filters segmentation rows at score_floor. If every score row survives this predicate,
@@ -1371,6 +1373,10 @@ def _decode_batch(prepared: _PreparedBatch, predictions: dict[str, torch.Tensor]
         else:
             # A synchronous accelerator blocks on every copy; pay that wait once for the three row tensors.
             boxes_cpu, scores_cpu, labels_cpu = _copy_rows_to_cpu_once(boxes, scores, labels)
+        pick_points_cpu = pick_points.float().to("cpu", non_blocking=is_cuda) if pick_points is not None else None
+        pick_point_valid_cpu = (
+            pick_point_valid.to("cpu", non_blocking=is_cuda) if pick_point_valid is not None else None
+        )
         keypoints_cpu = keypoints.float().to("cpu", non_blocking=is_cuda) if keypoints is not None else None
         # Preserve independent output storage for CPU postprocessors too; the device-to-host transfer already
         # supplies that copy for accelerator tensors, without an intermediate copy on the accelerator. `masks` still
@@ -1402,6 +1408,9 @@ def _decode_batch(prepared: _PreparedBatch, predictions: dict[str, torch.Tensor]
                 confidence=scores_cpu.numpy(),
                 class_id=labels_cpu.numpy(),
             )
+        if pick_points_cpu is not None and pick_point_valid_cpu is not None:
+            detections.data["pick_points"] = pick_points_cpu.numpy()
+            detections.data["pick_point_valid"] = pick_point_valid_cpu.numpy()
         if keypoint_precision_cpu is not None:
             detections.data["keypoint_precision_cholesky"] = keypoint_precision_cpu.numpy()
 

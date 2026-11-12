@@ -731,6 +731,8 @@ class ModelConfig(BaseConfig):
     ia_bce_loss: bool = True
     segmentation_head: bool = False
     use_grouppose_keypoints: bool = False
+    query_point_head: bool = False
+    query_point_class_ids: list[int] = Field(default_factory=list)
     keypoint_cross_attn: bool = True
     inter_instance_kp_attn: bool = False
     grouppose_keypoint_dim_downscale: int = 1
@@ -751,6 +753,17 @@ class ModelConfig(BaseConfig):
             "without inspecting ``pretrain_weights``."
         ),
     )
+
+    @model_validator(mode="after")
+    def validate_query_point_head(self) -> "ModelConfig":
+        """Keep the coordinate-only query head independent of GroupPose."""
+        if self.query_point_head:
+            if not self.segmentation_head or self.use_grouppose_keypoints or self.dec_layers < 1:
+                raise ValueError("query_point_head requires segmentation with decoder layers and no GroupPose")
+            classes = self.query_point_class_ids
+            if not classes or len(set(classes)) != len(classes) or any(c < 0 or c >= self.num_classes for c in classes):
+                raise ValueError("query_point_class_ids must select unique existing dataset classes")
+        return self
 
     @model_validator(mode="after")
     def _sync_pe_with_resolution(self) -> "ModelConfig":
@@ -1885,6 +1898,7 @@ class SegmentationTrainConfig(TrainConfig):
             mask loss computation.
         mask_ce_loss_coef: Cross-entropy loss weight for mask prediction.
         mask_dice_loss_coef: Dice loss weight for mask prediction.
+        query_point_loss_coef: Final-layer coordinate L1 weight when ModelConfig.query_point_head is enabled.
         mask_cldice_loss_coef: Final-layer topology loss weight; zero completely disables it.
         mask_cldice_class_ids: Explicit dataset classes receiving topology supervision.
         mask_cldice_iterations: Soft-skeleton erosion iterations after the initial layer.
@@ -1898,6 +1912,7 @@ class SegmentationTrainConfig(TrainConfig):
     mask_point_sample_ratio: int = 16
     mask_ce_loss_coef: float = 5.0
     mask_dice_loss_coef: float = 5.0
+    query_point_loss_coef: float = Field(default=1.0, ge=0, allow_inf_nan=False)
     mask_cldice_loss_coef: float = Field(default=0.0, ge=0, allow_inf_nan=False)
     mask_cldice_class_ids: list[int] = Field(default_factory=list)
     mask_cldice_iterations: int = Field(default=10, ge=0)

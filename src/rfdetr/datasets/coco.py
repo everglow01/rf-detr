@@ -1517,8 +1517,10 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     # Model-dependent pipeline options are mandatory for direct builder calls.
     square_resize_div_64 = args.square_resize_div_64
     include_masks = args.segmentation_head
-    include_keypoints = has_keypoints
+    include_keypoints = has_keypoints or getattr(args, "query_point_head", False)
     num_keypoints_per_class = getattr(args, "num_keypoints_per_class", [])
+    if getattr(args, "query_point_head", False):
+        num_keypoints_per_class = [int(i in args.query_point_class_ids) for i in range(args.num_classes)]
     aug_config = getattr(args, "aug_config", None)
     scale_jitter = getattr(args, "scale_jitter", True)
     keypoint_flip_pairs = resolve_keypoint_flip_pairs(args, include_keypoints=include_keypoints)
@@ -1653,8 +1655,10 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
     patch_size = args.patch_size
     num_windows = args.num_windows
     # Roboflow detection exports omit keypoint schema/flip-pair fields; missing values mean detection-only.
-    include_keypoints = getattr(args, "use_grouppose_keypoints", False)
+    include_keypoints = getattr(args, "use_grouppose_keypoints", False) or getattr(args, "query_point_head", False)
     num_keypoints_per_class = getattr(args, "num_keypoints_per_class", [])
+    if getattr(args, "query_point_head", False):
+        num_keypoints_per_class = [int(i in args.query_point_class_ids) for i in range(args.num_classes)]
     keypoint_flip_pairs = resolve_keypoint_flip_pairs(args, include_keypoints=include_keypoints)
     aug_config = getattr(args, "aug_config", None)
     scale_jitter = getattr(args, "scale_jitter", True)

@@ -34,12 +34,14 @@ class PostProcess(nn.Module):
         num_keypoints_per_class: list[int] | None = None,
         trace_alpha: float = 0.2,
         upsample_masks_to_image_size: bool = True,
+        query_point_class_ids: list[int] | None = None,
     ) -> None:
         super().__init__()
         if num_select < 0:
             raise ValueError(f"num_select must be non-negative; got {num_select}")
         self.num_select = num_select
         self.num_keypoints_per_class = num_keypoints_per_class or []
+        self.query_point_class_ids = tuple(query_point_class_ids or [])
         self.trace_alpha = trace_alpha
         self.upsample_masks_to_image_size = upsample_masks_to_image_size
 
@@ -65,13 +67,18 @@ class PostProcess(nn.Module):
         Returns:
             One dictionary per image. Every dictionary contains ``scores``, ``labels``, and ``boxes`` in absolute
             pixel coordinates clamped to the respective image dimensions. Segmentation outputs also contain
-            ``masks``. Keypoint outputs also contain ``keypoints`` and ``keypoint_precision_cholesky``. With
+            ``masks``; the optional query-point head adds ``pick_points`` (pixel xy) and ``pick_point_valid``
+            (selected-class flag, not a confidence or visibility estimate). GroupPose outputs contain ``keypoints``
+            and ``keypoint_precision_cholesky``. With
             ``score_threshold`` set, segmentation dictionaries, and box-only dictionaries computed on the CPU, hold
             only the detections above it — fewer rows, never different ones.
         """
         out_logits, out_bbox = outputs["pred_logits"], outputs["pred_boxes"]
         out_masks = outputs.get("pred_masks")
         out_keypoints = outputs.get("pred_keypoints")
+        out_points = outputs.get("pred_pick_points")
+        if out_points is not None and (out_masks is None or not self.query_point_class_ids):
+            raise ValueError("Picking-point postprocessing requires masks and query_point_class_ids")
         self._validate_outputs(out_logits, out_masks, out_keypoints, target_sizes)
 
         if (
@@ -86,7 +93,7 @@ class PostProcess(nn.Module):
         boxes = self._gather_and_scale_boxes(out_bbox, topk_boxes, target_sizes)
 
         if out_masks is not None:
-            return self._postprocess_masks(
+            results = self._postprocess_masks(
                 out_masks,
                 scores,
                 labels,
@@ -96,6 +103,21 @@ class PostProcess(nn.Module):
                 self.upsample_masks_to_image_size,
                 score_threshold=score_threshold,
             )
+            if out_points is not None:
+                points = out_points.gather(1, topk_boxes.unsqueeze(-1).expand(-1, -1, 2))
+                points = points * target_sizes.flip(-1).to(points.dtype)[:, None, :]
+                for i, result in enumerate(results):
+                    keep = (
+                        torch.ones_like(scores[i], dtype=torch.bool)
+                        if score_threshold is None
+                        else scores[i] > score_threshold
+                    )
+                    result["pick_points"] = points[i, keep]
+                    valid = torch.zeros_like(result["labels"], dtype=torch.bool)
+                    for class_id in self.query_point_class_ids:
+                        valid |= result["labels"] == class_id
+                    result["pick_point_valid"] = valid
+            return results
         if out_keypoints is not None:
             return self._postprocess_keypoints(out_keypoints, scores, labels, boxes, topk_boxes, target_sizes)
         return self._postprocess_boxes(scores, labels, boxes)

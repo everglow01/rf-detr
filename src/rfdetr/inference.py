@@ -460,6 +460,7 @@ def _build_model_context(model_config: ModelConfig, *, trust_checkpoint: bool = 
     # child processes in notebook environments.
     postprocess = PostProcess(
         num_select=args.num_select,
+        query_point_class_ids=getattr(args, "query_point_class_ids", []),
         num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
         # Older detection-only namespaces may omit keypoint postprocess knobs; keep the ModelConfig default.
         trace_alpha=getattr(args, "postprocess_trace_alpha", 0.2),

@@ -38,6 +38,9 @@ class BuilderArgs(Protocol):
     freeze_encoder: bool
     backbone_lora: bool
     two_stage: bool
+    query_point_head: bool
+    query_point_class_ids: list[int]
+    query_point_loss_coef: float
     use_grouppose_keypoints: bool
     keypoint_cross_attn: bool
     inter_instance_kp_attn: bool
