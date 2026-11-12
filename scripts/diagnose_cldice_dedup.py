@@ -20,6 +20,7 @@ import hashlib
 import importlib.util
 import json
 import math
+import shutil
 import subprocess
 import sys
 import time
@@ -200,8 +201,11 @@ def compare_gradients(module: Any, dataset: CocoDetection, other: Any, args: Any
         for name in sorted({group_name(key) for key, _ in named})
     }
     groups["all"] = list(range(len(named)))
-    rows, prediction_rows = [], []
-    for bi in range(args.batches):
+    rows = []
+
+    def run_batch(bi: int) -> dict[str, Any]:
+        """Release a complete diagnostic graph when this batch returns or raises."""
+        torch.cuda.reset_peak_memory_stats()
         samples, targets, meta = batch_at(dataset, bi, module.model_config.patch_size * module.model_config.num_windows)
         matched: dict[str, Any] = {}
         new_loss = module.criterion.loss_mask_cldice
@@ -292,9 +296,6 @@ def compare_gradients(module: Any, dataset: CocoDetection, other: Any, args: Any
                 )
                 for name, ids in groups.items()
             }
-            prediction_rows.extend(prediction_skeleton_mass(outputs, targets, matched["indices"]))
-        rows.append(row)
-        write_json(args.output / f"{label}.json", rows)
         if parity:
             assert row["mask_input_gradient"]["bitwise_equal"]
         print(
@@ -309,20 +310,51 @@ def compare_gradients(module: Any, dataset: CocoDetection, other: Any, args: Any
             ),
             flush=True,
         )
-        del (
-            outputs,
-            losses,
-            native,
-            current,
-            alternate,
-            first_grad,
-            second_grad,
-            original_grad,
-            first_repeat,
-            second_repeat,
-        )
-    if not parity:
-        write_json(args.output / "prediction_skeleton_mass.json", prediction_rows)
+        return row
+
+    for bi in range(args.batches):
+        try:
+            row = run_batch(bi)
+        except torch.OutOfMemoryError as error:
+            if parity:
+                raise
+            row = dict(
+                batch=bi,
+                scale=(264, 384, 504)[bi % 3],
+                status="oom",
+                error=str(error),
+                peak_allocated_mib=torch.cuda.max_memory_allocated() / 2**20,
+            )
+            print(json.dumps(dict(stage=label, batch=bi, status="oom")), flush=True)
+        rows.append(row)
+        write_json(args.output / f"{label}.json", rows)
+        # Outside the exception block, its traceback no longer owns the failed graph.
+        gc.collect()
+        torch.cuda.empty_cache()
+
+
+@torch.no_grad()
+def collect_prediction_mass(module: Any, dataset: CocoDetection, args: Any) -> None:
+    """Measure every matched query without retaining gradient-probe graphs."""
+    rows = []
+    for bi in range(args.batches):
+        samples, targets, meta = batch_at(dataset, bi, module.model_config.patch_size * module.model_config.num_windows)
+        matched: dict[str, Any] = {}
+        original = module.criterion.loss_mask_cldice
+
+        def capture(outputs: Any, truth: Any, indices: Any) -> Any:
+            matched["indices"] = indices
+            return original(outputs, truth, indices)
+
+        torch.manual_seed(7000 + bi)
+        with patch.object(module.criterion, "loss_mask_cldice", side_effect=capture):
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                outputs = module.model(samples, targets)
+                outputs["mask_padding"] = meta["padding"]
+                module.criterion(outputs, targets)
+        rows.extend(prediction_skeleton_mass(outputs, targets, matched["indices"]))
+        write_json(args.output / "prediction_skeleton_mass.json", rows)
+        print(json.dumps(dict(stage="prediction_mass", batch=bi, queries=len(rows))), flush=True)
 
 
 @torch.no_grad()
@@ -379,51 +411,84 @@ def coverage_k25(dataset: CocoDetection, args: Any) -> None:
 
 
 def benchmark(module: Any, dataset: CocoDetection, old: Any, k25: Any, args: Any) -> None:
-    """Time complete forward+loss+one backward, without optimizer steps.
+    """Measure one complete backward, recording OOMs without reducing the batch.
 
-    Warm every mode/shape, then rotate execution order. Report allocated memory; reserved allocator memory is not a fair
-    live-activation comparison.
+    Warm every mode/shape, rotate execution order, and report allocated memory. Failed configurations are retained as
+    capacity failures; their later repetitions are skipped, never counted as fast successful passes.
     """
     modes = {"legacy_k10": old, "dedup_k10": module.criterion, "dedup_k25": k25}
     rows = []
+
+    def run_step(criterion: Any, samples: Any, targets: Any, meta: Any, bi: int) -> dict[str, Any]:
+        """Keep graph references local so an OOM can be cleaned up before the next mode."""
+        module.model.zero_grad(set_to_none=True)
+        gc.collect()
+        torch.cuda.synchronize()
+        torch.cuda.reset_peak_memory_stats()
+        torch.manual_seed(7000 + bi)
+        begin = time.perf_counter()
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            outputs = module.model(samples, targets)
+            outputs["mask_padding"] = meta["padding"]
+            losses = criterion(outputs, targets)
+            total = torch.stack(
+                [v * criterion.weight_dict[k] for k, v in losses.items() if k in criterion.weight_dict]
+            ).sum()
+        torch.autograd.backward(total)
+        torch.cuda.synchronize()
+        return dict(
+            status="ok",
+            seconds=time.perf_counter() - begin,
+            loss=float(total.detach()),
+            peak_allocated_mib=torch.cuda.max_memory_allocated() / 2**20,
+        )
+
     for bi in range(args.batches):
         samples, targets, meta = batch_at(dataset, bi, module.model_config.patch_size * module.model_config.num_windows)
+        failed = set()
         for repeat in range(3):
             keys = list(modes)
             rotation = (bi + repeat) % len(keys)
             for name in keys[rotation:] + keys[:rotation]:
-                module.model.zero_grad(set_to_none=True)
-                gc.collect()
-                torch.cuda.synchronize()
-                torch.cuda.reset_peak_memory_stats()
-                torch.manual_seed(7000 + bi)
-                begin = time.perf_counter()
-                with torch.autocast("cuda", dtype=torch.bfloat16):
-                    outputs = module.model(samples, targets)
-                    outputs["mask_padding"] = meta["padding"]
-                    losses = modes[name](outputs, targets)
-                    total = torch.stack(
-                        [v * modes[name].weight_dict[k] for k, v in losses.items() if k in modes[name].weight_dict]
-                    ).sum()
-                torch.autograd.backward(total)
-                torch.cuda.synchronize()
-                elapsed = time.perf_counter() - begin
-                if repeat:
-                    rows.append(
-                        dict(
-                            batch=bi,
-                            scale=meta["scale"],
-                            mode=name,
-                            repeat=repeat,
-                            seconds=elapsed,
-                            loss=float(total.detach()),
-                            peak_allocated_mib=torch.cuda.max_memory_allocated() / 2**20,
-                        )
+                if name in failed:
+                    continue
+                try:
+                    result = run_step(modes[name], samples, targets, meta, bi)
+                except torch.OutOfMemoryError as error:
+                    result = dict(
+                        status="oom", error=str(error), peak_allocated_mib=torch.cuda.max_memory_allocated() / 2**20
                     )
-                del outputs, losses, total
-        write_json(args.output / "benchmark.json", rows)
-        print(json.dumps(dict(stage="benchmark", batch=bi, measured_passes=len(rows))), flush=True)
+                    failed.add(name)
+                if repeat or result["status"] == "oom":
+                    rows.append(dict(batch=bi, scale=meta["scale"], mode=name, repeat=repeat, **result))
+                    write_json(args.output / "benchmark.json", rows)
+                if result["status"] == "oom":
+                    module.model.zero_grad(set_to_none=True)
+                    gc.collect()
+                    torch.cuda.empty_cache()
+        print(json.dumps(dict(stage="benchmark", batch=bi, failed_modes=sorted(failed))), flush=True)
     module.model.zero_grad(set_to_none=True)
+
+
+def reuse_verification(args: Any) -> None:
+    """Reuse exact parity and GT coverage only when all model/data evidence still matches."""
+    prior = json.loads((args.verified_run / "provenance.json").read_text())
+    for key in ("config", "checkpoint", "legacy_criterion", "coverage_records", "batches"):
+        value = getattr(args, key)
+        assert prior["arguments"][key] == (str(value) if isinstance(value, Path) else value)
+    for name, expected in prior["sha256"].items():
+        if Path(name).resolve() != Path(__file__).resolve():
+            assert hashlib.sha256(Path(name).read_bytes()).hexdigest() == expected, name
+    gate = json.loads((args.verified_run / "equivalence_passed.json").read_text())
+    rows = json.loads((args.verified_run / "equivalence.json").read_text())
+    assert gate["passed"] and len(rows) == args.batches
+    assert all(r["new_k10_loss"] == r["alternate_loss"] and r["mask_input_gradient"]["bitwise_equal"] for r in rows)
+    coverage = json.loads((args.verified_run / "coverage_k25.json").read_text())
+    assert len(coverage) == 2669 and all(r["extinct"] and r["k25_coverage"] == 1 for r in coverage)
+    for name in ("equivalence_passed.json", "equivalence.json", "coverage_k25.json"):
+        shutil.copyfile(args.verified_run / name, args.output / name)
+    shutil.copyfile(args.verified_run / "provenance.json", args.output / "reused_verification_provenance.json")
+    print(json.dumps(dict(stage="reused_verified_evidence", source=str(args.verified_run))), flush=True)
 
 
 def parameter_hash(module: Any) -> str:
@@ -444,6 +509,7 @@ def main() -> None:
     parser.add_argument("--coverage-records", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--batches", type=int, default=9)
+    parser.add_argument("--verified-run", type=Path)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
     torch.set_num_threads(2)
@@ -461,6 +527,11 @@ def main() -> None:
     paths.extend(Path(tc.dataset_dir) / split / "_annotations.coco.json" for split in ("train", "valid"))
     paths.extend(args.coverage_records / f"coverage_seed{seed}.json" for seed in (42, 43, 44))
     paths.append(Path(__file__).with_name("diagnose_tomato_e1.py"))
+    if args.verified_run:
+        paths.extend(
+            args.verified_run / name
+            for name in ("provenance.json", "equivalence_passed.json", "equivalence.json", "coverage_k25.json")
+        )
     write_json(
         args.output / "provenance.json",
         dict(
@@ -490,22 +561,29 @@ def main() -> None:
     k25 = copy.copy(module.criterion)
     k25.mask_cldice_iterations = 25
     begin = time.monotonic()
-    # Exact parity at every input of the modified adapter implies equal shared-parameter
-    # derivatives by the chain rule. Record stochastic CUDA backward separately, then
-    # restore training kernels before K=25 probes and timing.
-    deterministic = torch.are_deterministic_algorithms_enabled()
-    try:
-        compare_gradients(module, dataset, old, args, parity=True)
-    finally:
-        torch.use_deterministic_algorithms(deterministic)
-    write_json(
-        args.output / "equivalence_passed.json",
-        dict(
-            passed=True, batches=args.batches, scope="exact_loss_and_all_mask_input_gradients", shared_backward="noisy"
-        ),
-    )
-    coverage_k25(dataset, args)
+    if args.verified_run:
+        reuse_verification(args)
+    else:
+        # Exact parity at every input of the modified adapter implies equal shared-parameter
+        # derivatives by the chain rule. Record stochastic CUDA backward separately, then
+        # restore training kernels before K=25 probes and timing.
+        deterministic = torch.are_deterministic_algorithms_enabled()
+        try:
+            compare_gradients(module, dataset, old, args, parity=True)
+        finally:
+            torch.use_deterministic_algorithms(deterministic)
+        write_json(
+            args.output / "equivalence_passed.json",
+            dict(
+                passed=True,
+                batches=args.batches,
+                scope="exact_loss_and_all_mask_input_gradients",
+                shared_backward="noisy",
+            ),
+        )
+        coverage_k25(dataset, args)
     compare_gradients(module, dataset, k25, args, parity=False)
+    collect_prediction_mass(module, dataset, args)
     benchmark(module, dataset, old, k25, args)
     after = parameter_hash(module.model)
     assert before == after
