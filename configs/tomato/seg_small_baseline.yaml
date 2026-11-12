@@ -1,0 +1,66 @@
+# E0: original Seg Small; formal 100-epoch protocol validated by the batch-size benchmarks.
+# Launch on two GPUs with torchrun; choose a new output_dir for a separate repeat.
+seed_everything: 42
+model:
+  load_encoder_weights: false
+  model_config:
+    class_path: rfdetr.config.RFDETRSegSmallConfig
+    init_args:
+      num_classes: 3
+      resolution: 384
+      device: cuda
+      pretrain_weights: checkpoint/pretrained/rf-detr-seg-small.pt
+      segmentation_head: true
+      use_grouppose_keypoints: false
+      compile: false
+      cuda_graphs: false
+      gradient_checkpointing: false
+      fused_optimizer: true
+  train_config:
+    class_path: rfdetr.config.SegmentationTrainConfig
+    init_args:
+      dataset_file: roboflow
+      dataset_dir: data/0/TOMATO.v7i.rfdetr-keypoints-v1
+      output_dir: output/output1/baseline-seg-small-v1-seed42/training
+      epochs: 100
+      batch_size: 8
+      grad_accum_steps: 1
+      devices: 2
+      strategy: ddp
+      num_nodes: 1
+      accelerator: gpu
+      amp_dtype: bf16
+      seed: 42
+      num_workers: 4
+      lr: 0.0001
+      lr_encoder: 0.00015
+      weight_decay: 0.0001
+      lr_vit_layer_decay: 0.8
+      lr_component_decay: 0.7
+      optimizer: adamw
+      lr_scheduler: step
+      lr_scheduler_kwargs:
+        lr_drop: 70
+      warmup_epochs: 0
+      clip_max_norm: 0.1
+      augmentation_backend: TV
+      multi_scale: PER_BATCH
+      expanded_scales: true
+      scale_jitter: true
+      use_ema: true
+      ema_decay: 0.993
+      ema_tau: 100
+      eval_interval: 1
+      eval_base_model: false
+      eval_masks_head_resolution: false
+      eval_backend: vernier
+      eval_max_dets: 500
+      log_per_class_metrics: true
+      compute_val_loss: true
+      best_model_metric: map
+      early_stopping: false
+      num_sanity_val_steps: 0
+      run_test: false
+      checkpoint_interval: 20
+      tensorboard: true
+      progress_bar: null
