@@ -59,7 +59,14 @@ def _soft_skeleton(mask: Tensor, iterations: int) -> Tensor:
     return skeleton
 
 
-def soft_cldice_loss(logits: Tensor, targets: Tensor, *, iterations: int = 10, smooth: float = 1.0) -> Tensor:
+def soft_cldice_loss(
+    logits: Tensor,
+    targets: Tensor,
+    *,
+    iterations: int = 10,
+    smooth: float = 1.0,
+    target_skeleton: Tensor | None = None,
+) -> Tensor:
     """Return one soft-clDice loss per matched instance, with no batch reduction.
 
     Args:
@@ -67,6 +74,8 @@ def soft_cldice_loss(logits: Tensor, targets: Tensor, *, iterations: int = 10, s
         targets: Binary target masks on the same grid and device as logits.
         iterations: Number of erosions after the initial skeleton layer.
         smooth: Positive finite stabilizer for skeleton-overlap ratios.
+        target_skeleton: Optional precomputed GT skeleton, shaped like targets and built with the same iterations.
+            Detached like targets; lets repeated matches reuse GT preprocessing outside activation checkpointing.
 
     Returns:
         Losses with shape (N,). FP16/BF16/FP32 inputs compute in FP32, while
@@ -86,6 +95,8 @@ def soft_cldice_loss(logits: Tensor, targets: Tensor, *, iterations: int = 10, s
         raise ValueError("logits must have shape (N, H, W)")
     if targets.shape != logits.shape:
         raise ValueError("logits and targets must have the same shape")
+    if target_skeleton is not None and target_skeleton.shape != logits.shape:
+        raise ValueError("target_skeleton and logits must have the same shape")
     if iterations < 0:
         raise ValueError("iterations must be nonnegative")
     if not math.isfinite(smooth) or smooth <= 0:
@@ -98,7 +109,11 @@ def soft_cldice_loss(logits: Tensor, targets: Tensor, *, iterations: int = 10, s
     probabilities = values.sigmoid().unsqueeze(1)
     with torch.no_grad():
         labels = targets.detach().to(dtype=dtype).unsqueeze(1)
-        target_skeleton = _soft_skeleton(labels, iterations)
+        target_skeleton = (
+            _soft_skeleton(labels, iterations)
+            if target_skeleton is None
+            else target_skeleton.detach().to(dtype=dtype).unsqueeze(1)
+        )
     predicted_skeleton = _soft_skeleton(probabilities, iterations)
     dimensions = (1, 2, 3)
     precision = ((predicted_skeleton * labels).sum(dimensions) + smooth) / (predicted_skeleton.sum(dimensions) + smooth)

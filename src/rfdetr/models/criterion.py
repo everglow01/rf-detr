@@ -27,7 +27,7 @@ from rfdetr.models.heads.segmentation import (
 )
 from rfdetr.models.matcher import HungarianMatcher
 from rfdetr.models.math import accuracy
-from rfdetr.models.soft_cldice import soft_cldice_loss
+from rfdetr.models.soft_cldice import _soft_skeleton, soft_cldice_loss
 from rfdetr.utilities import box_ops
 from rfdetr.utilities.compiler import script_or_eager
 from rfdetr.utilities.distributed import get_world_size, is_dist_avail_and_initialized
@@ -1030,13 +1030,17 @@ class SetCriterion(nn.Module):
         del src_masks
         return losses
 
-    def _cldice_on_image(self, logits: Tensor, masks: Tensor, padding: Tensor) -> Tensor:
+    def _cldice_on_image(
+        self, logits: Tensor, masks: Tensor, padding: Tensor, target_skeletons: Tensor, target_inverse: Tensor
+    ) -> Tensor:
         """Align selected masks to the input canvas and exclude padding before skeletonization.
 
         Args:
             logits: Selected instance logits at the mask-head resolution, ``(N,Hm,Wm)``.
             masks: Binary GT masks at this image's transformed resolution, ``(N,H,W)``.
             padding: Boolean padding mask of the complete model input canvas, ``(Hp,Wp)``.
+            target_skeletons: One detached skeleton per unique selected GT, ``(U,H,W)``.
+            target_inverse: Map each matched query to its unique GT skeleton, ``(N,)``.
 
         Returns:
             Sum of per-instance losses on the valid image grid.
@@ -1046,7 +1050,9 @@ class SetCriterion(nn.Module):
             :, 0, :height, :width
         ]
         aligned = aligned.masked_fill(padding[:height, :width], -torch.inf)
-        return soft_cldice_loss(aligned, masks, iterations=self.mask_cldice_iterations).sum()
+        return soft_cldice_loss(
+            aligned, masks, iterations=self.mask_cldice_iterations, target_skeleton=target_skeletons[target_inverse]
+        ).sum()
 
     def loss_query_point(
         self,
@@ -1094,9 +1100,10 @@ class SetCriterion(nn.Module):
 
         Each valid matched instance counts once, including Group DETR repeats. All ranks reduce the selected count,
         including ranks with no stems. The global count is clamped BEFORE division by world size so a single stem across
-        two ranks still receives its full gradient after DDP averages the rank gradients. Skeleton activations are
-        recomputed during backward to bound their storage at full mask resolution. No randomness is used, and all
-        original losses have already run before this method is called.
+        two ranks still receives its full gradient after DDP averages the rank gradients. GT skeletons are computed once
+        per unique nonempty target outside checkpointing. Prediction skeleton activations are recomputed during backward
+        to bound their storage at full mask resolution. No randomness is used, and all original losses have already run
+        before this method is called.
         """
         padding = outputs.get("mask_padding")
         if padding is None:
@@ -1130,6 +1137,11 @@ class SetCriterion(nn.Module):
             selected_count += source_indices.numel()
             if source_indices.numel() == 0:
                 continue
+            # Keep every Group DETR match, but skeletonize each underlying GT only once.
+            unique_targets, target_inverse = torch.unique(target_indices[nonempty], return_inverse=True)
+            with torch.no_grad():
+                unique_masks = target["masks"][unique_targets].bool() & ~padding[batch_index, :height, :width]
+                target_skeletons = _soft_skeleton(unique_masks.float().unsqueeze(1), self.mask_cldice_iterations)[:, 0]
             if isinstance(pred_masks, Tensor):
                 logits = pred_masks[batch_index, source_indices]
             else:
@@ -1147,11 +1159,15 @@ class SetCriterion(nn.Module):
                     logits,
                     masks,
                     padding[batch_index],
+                    target_skeletons,
+                    target_inverse,
                     use_reentrant=False,
                     preserve_rng_state=False,
                 )
             else:
-                numerator = numerator + self._cldice_on_image(logits, masks, padding[batch_index])
+                numerator = numerator + self._cldice_on_image(
+                    logits, masks, padding[batch_index], target_skeletons, target_inverse
+                )
         count = numerator.new_tensor(selected_count)
         if is_dist_avail_and_initialized():
             torch.distributed.all_reduce(count)
