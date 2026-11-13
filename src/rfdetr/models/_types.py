@@ -111,3 +111,4 @@ class BuilderArgs(Protocol):
     mask_cldice_class_ids: list[int]
     mask_cldice_iterations: int
     mask_cldice_chunk_size: int
+    mask_cldice_recall_beta: float

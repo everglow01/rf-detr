@@ -1903,6 +1903,7 @@ class SegmentationTrainConfig(TrainConfig):
         mask_cldice_class_ids: Explicit dataset classes receiving topology supervision.
         mask_cldice_iterations: Soft-skeleton erosion iterations after the initial layer.
         mask_cldice_chunk_size: Matches per topology checkpoint; zero processes the whole image.
+        mask_cldice_recall_beta: Centerline F-beta balance; one preserves clDice, greater than one favors coverage.
         cls_loss_coef: Classification loss weight. Defaults to ``1.0`` to match the
             effective pre-v1.7 value (the v1.7 TrainConfig ownership migration
             silently activated a dormant ``5.0``; this field restores the correct
@@ -1918,6 +1919,7 @@ class SegmentationTrainConfig(TrainConfig):
     mask_cldice_class_ids: list[int] = Field(default_factory=list)
     mask_cldice_iterations: int = Field(default=10, ge=0)
     mask_cldice_chunk_size: int = Field(default=0, ge=0)
+    mask_cldice_recall_beta: float = Field(default=1.0, gt=0, allow_inf_nan=False)
     cls_loss_coef: float = 1.0
 
     @model_validator(mode="after")

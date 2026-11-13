@@ -548,6 +548,7 @@ class SetCriterion(nn.Module):
         mask_cldice_iterations: int = 10,
         query_point_class_ids: list[int] | None = None,
         mask_cldice_chunk_size: int = 0,
+        mask_cldice_recall_beta: float = 1.0,
     ) -> None:
         """Create the criterion.
 
@@ -561,6 +562,7 @@ class SetCriterion(nn.Module):
             mask_cldice_class_ids: GT classes selected for the optional final-layer topology loss.
             mask_cldice_iterations: Number of additional soft-skeleton erosion steps.
             mask_cldice_chunk_size: Maximum matches per topology checkpoint; zero keeps whole-image computation.
+            mask_cldice_recall_beta: Centerline F-beta balance; greater than one favors GT skeleton coverage.
             query_point_class_ids: GT classes receiving one visible point coordinate loss per final match.
         """
         super().__init__()
@@ -587,6 +589,7 @@ class SetCriterion(nn.Module):
         if mask_cldice_chunk_size < 0:
             raise ValueError("mask_cldice_chunk_size must be nonnegative")
         self.mask_cldice_chunk_size = mask_cldice_chunk_size
+        self.mask_cldice_recall_beta = mask_cldice_recall_beta
         if weight_dict.get("loss_mask_cldice", 0.0) > 0:
             if not self.mask_cldice_class_ids or any(
                 label < 0 or label >= num_classes for label in self.mask_cldice_class_ids
@@ -1056,7 +1059,11 @@ class SetCriterion(nn.Module):
         ]
         aligned = aligned.masked_fill(padding[:height, :width], -torch.inf)
         return soft_cldice_loss(
-            aligned, masks, iterations=self.mask_cldice_iterations, target_skeleton=target_skeletons[target_inverse]
+            aligned,
+            masks,
+            iterations=self.mask_cldice_iterations,
+            target_skeleton=target_skeletons[target_inverse],
+            recall_beta=self.mask_cldice_recall_beta,
         ).sum()
 
     def loss_query_point(

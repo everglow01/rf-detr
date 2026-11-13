@@ -66,6 +66,7 @@ def soft_cldice_loss(
     iterations: int = 10,
     smooth: float = 1.0,
     target_skeleton: Tensor | None = None,
+    recall_beta: float = 1.0,
 ) -> Tensor:
     """Return one soft-clDice loss per matched instance, with no batch reduction.
 
@@ -76,6 +77,8 @@ def soft_cldice_loss(
         smooth: Positive finite stabilizer for skeleton-overlap ratios.
         target_skeleton: Optional precomputed GT skeleton, shaped like targets and built with the same iterations.
             Detached like targets; lets repeated matches reuse GT preprocessing outside activation checkpointing.
+        recall_beta: Positive F-beta balance. One keeps the original arithmetic; values above one favor GT
+            skeleton coverage over predicted-skeleton precision, not object detection recall directly.
 
     Returns:
         Losses with shape (N,). FP16/BF16/FP32 inputs compute in FP32, while
@@ -102,6 +105,9 @@ def soft_cldice_loss(
     if not math.isfinite(smooth) or smooth <= 0:
         raise ValueError("smooth must be positive and finite")
 
+    if not math.isfinite(recall_beta) or recall_beta <= 0:
+        raise ValueError("recall_beta must be positive and finite")
+
     dtype = torch.float64 if logits.dtype == torch.float64 else torch.float32
     values = logits.to(dtype=dtype)
     if values.shape[0] == 0:
@@ -120,4 +126,13 @@ def soft_cldice_loss(
     sensitivity = ((target_skeleton * probabilities).sum(dimensions) + smooth) / (
         target_skeleton.sum(dimensions) + smooth
     )
-    return 1 - 2 * precision * sensitivity / (precision + sensitivity)
+    if recall_beta == 1.0:
+        return 1 - 2 * precision * sensitivity / (precision + sensitivity)
+    # Normalize coefficients before squaring to avoid overflow for finite beta.
+    if recall_beta > 1.0:
+        precision_weight, sensitivity_weight = 1.0, (1.0 / recall_beta) ** 2
+    else:
+        precision_weight, sensitivity_weight = recall_beta**2, 1.0
+    return 1 - (precision_weight + sensitivity_weight) * precision * sensitivity / (
+        precision_weight * precision + sensitivity_weight * sensitivity
+    )

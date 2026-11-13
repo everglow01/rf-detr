@@ -125,7 +125,7 @@ def short_config(base: dict[str, Any], output: Path, coefficient: float) -> dict
     return config
 
 
-def probe(output: Path) -> None:
+def probe(output: Path, recall_beta: float = 1.0) -> None:
     """Complete the old OOM batch's native/region/topology shared-gradient diagnosis without updates."""
     output.mkdir(parents=True, exist_ok=False)
     args = argparse.Namespace(
@@ -133,6 +133,7 @@ def probe(output: Path) -> None:
     )
     mc, tc = configurations(args)
     tc.mask_cldice_iterations, tc.mask_cldice_chunk_size = 25, 4
+    tc.mask_cldice_recall_beta = recall_beta
     assert tc.mask_cldice_loss_coef == 0.1 and tc.mask_cldice_class_ids == [1]
     torch.set_num_threads(2)
     module = RFDETRModelModule(mc, tc, load_encoder_weights=False).cuda().train()
@@ -185,6 +186,7 @@ def probe(output: Path) -> None:
         iterations=25,
         coefficient=0.1,
         chunk_size=4,
+        recall_beta=recall_beta,
         batch_size=8,
         group_detr=13,
         native_loss=float(native.detach()),
@@ -398,9 +400,12 @@ def main() -> None:
     parser.add_argument("action", choices=("probe", "run", "evaluate"))
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--expected-commit", default="")
+    parser.add_argument("--recall-beta", type=float, default=1.0, help="F-beta balance for the frozen probe only")
     args = parser.parse_args()
+    if args.recall_beta != 1.0 and args.action != "probe":
+        parser.error("--recall-beta is only supported for the frozen probe")
     if args.action == "probe":
-        probe(args.output)
+        probe(args.output, args.recall_beta)
     elif args.action == "evaluate":
         evaluate_pair(args.output, args.expected_commit)
     else:
