@@ -9,3 +9,5 @@
 - 复用 Git 中保存的 `BenchmarkTiming` 记录每个rank的训练、验证、整轮耗时和峰值显存，另采样设备占用。没有更改模型源码、损失公式或原训练归档。
 - 主比较固定为第10轮EMA，补充比较各自前10轮内最佳EMA。复用原果梗评估器，对完整199张验证图计算果梗mask AP、confidence=0.3 / mask IoU=0.5下的召回率、漏检、条件clDice、漏检计零clDice及断裂情况。原日志中的逐类框AP不当作mask AP。
 - 每组保存原生最佳/最后权重及恢复检查点，便于复核；输出统一置于新的 `output/output1/` 子目录。十轮仅判断早期趋势，不能作为最终收敛结果或多种子结论。
+
+评估依赖复用既有 `output/output1/baseline-analysis-20261111/eval-deps`。入口会在训练前检查评估器能否加载；如果训练已完成而评估中断，可用 `python -m scripts.tomato_short_ablation evaluate --output <已有成对输出目录> --expected-commit <当前SHA>` 单独完成评估。该入口验证两组审计记录，核对评估前后权重哈希一致，不创建优化器；训练提交与评估提交分别记录。

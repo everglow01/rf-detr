@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 import yaml
+from pytest_mock import MockerFixture
 
 from scripts.tomato_short_ablation import REPO, StopAfterTen, short_config
 
@@ -39,3 +40,15 @@ def test_stop_only_after_tenth_epoch(epoch: int, tmp_path: Path) -> None:
     callback.on_train_epoch_end(trainer, None)
     assert trainer.should_stop == (epoch == 9)
     assert trainer.max_epochs == 100
+
+
+def test_evaluate_action_never_starts_training(tmp_path: Path, mocker: MockerFixture) -> None:
+    """An interrupted evaluation can be completed without repeating either training arm."""
+    from scripts import tomato_short_ablation
+
+    mocker.patch("sys.argv", ["runner", "evaluate", "--output", str(tmp_path), "--expected-commit", "verified"])
+    train = mocker.patch.object(tomato_short_ablation, "run")
+    evaluate = mocker.patch.object(tomato_short_ablation, "evaluate_pair")
+    tomato_short_ablation.main()
+    train.assert_not_called()
+    evaluate.assert_called_once_with(tmp_path, "verified")

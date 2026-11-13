@@ -254,6 +254,14 @@ def train_arm(config: Path, output: Path, env: dict[str, str]) -> None:
     print(json.dumps(dict(stage="training_complete", arm=output.name, **result)), flush=True)
 
 
+def load_evaluator() -> Any:
+    """Reuse the existing isolated evaluation dependencies and fail before starting training if unavailable."""
+    dependencies = REPO / "output/output1/baseline-analysis-20261111/eval-deps"
+    if dependencies.is_dir() and str(dependencies) not in sys.path:
+        sys.path.insert(0, str(dependencies))
+    return runpy.run_path(str(EVALUATOR))["run"]
+
+
 def run(output: Path, expected_commit: str) -> None:
     """Gate the paired short runs on finite connected gradients, then evaluate both last and best EMA weights."""
     assert subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip() == expected_commit
@@ -261,6 +269,7 @@ def run(output: Path, expected_commit: str) -> None:
     assert not subprocess.check_output(
         ["nvidia-smi", "--query-compute-apps=pid", "--format=csv,noheader"], text=True
     ).strip()
+    load_evaluator()
     output.mkdir(parents=True, exist_ok=False)
     base_path = REPO / "configs/tomato/seg_small_baseline.yaml"
     base = yaml.safe_load(base_path.read_text())
@@ -333,6 +342,13 @@ def run(output: Path, expected_commit: str) -> None:
         config = output / f"{name}.yaml"
         config.write_text(yaml.safe_dump(short_config(base, output / name, coefficient), sort_keys=False))
         train_arm(config, output / name, env)
+    evaluate_pair(output, expected_commit)
+
+
+def evaluate_pair(output: Path, expected_commit: str) -> None:
+    """Evaluate an already completed pair without creating an optimizer or starting another training run."""
+    assert subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip() == expected_commit
+    evaluate = load_evaluator()
     for rank in (0, 1):
         audits = [json.loads((output / name / f"audit.rank{rank}.json").read_text()) for name in ("baseline", "cldice")]
         assert audits[0] == audits[1], "Initialization, sampled first batches, learning rates or update counts differ"
@@ -342,8 +358,25 @@ def run(output: Path, expected_commit: str) -> None:
         dict(passed=True, epochs=10, initialization_and_first_batches_match=True),
     )
     evaluation = output / "evaluation"
-    evaluation.mkdir()
-    evaluate = runpy.run_path(str(EVALUATOR))["run"]
+    evaluation.mkdir(exist_ok=True)
+    assert not any(evaluation.iterdir()), "Keep existing evaluation results; choose a fresh analysis before retrying"
+    before_weights = {
+        str(p.relative_to(output)): hashlib.sha256(p.read_bytes()).hexdigest()
+        for name in ("baseline", "cldice")
+        for p in (output / name).glob("*.pth")
+    }
+    write_json(
+        output / "evaluation-provenance.json",
+        dict(
+            training_git_commit=json.loads((output / "provenance.json").read_text())["git_commit"],
+            evaluation_git_commit=expected_commit,
+            evaluator_sha256=hashlib.sha256(EVALUATOR.read_bytes()).hexdigest(),
+            skimage_version=getattr(sys.modules["skimage"], "__version__"),
+            skimage_path=getattr(sys.modules["skimage"], "__file__"),
+            checkpoint_sha256=before_weights,
+            optimizer_steps=0,
+        ),
+    )
     torch.set_num_threads(2)
     for name in ("baseline", "cldice"):
         for file, label in (("last_ema.pth", "last10"), ("checkpoint_best_ema.pth", "best")):
@@ -355,18 +388,21 @@ def run(output: Path, expected_commit: str) -> None:
         for name in ("baseline", "cldice")
         for p in (output / name).glob("*.pth")
     }
+    assert weights == before_weights, "Evaluation changed a checkpoint"
     write_json(output / "completed.json", dict(complete=True, epochs_per_arm=10, evaluations=4, weight_sha256=weights))
 
 
 def main() -> None:
     """Run one isolated probe or the complete user-authorized experiment pair."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("probe", "run"))
+    parser.add_argument("action", choices=("probe", "run", "evaluate"))
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--expected-commit", default="")
     args = parser.parse_args()
     if args.action == "probe":
         probe(args.output)
+    elif args.action == "evaluate":
+        evaluate_pair(args.output, args.expected_commit)
     else:
         run(args.output, args.expected_commit)
 
