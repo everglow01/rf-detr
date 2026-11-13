@@ -214,17 +214,23 @@ def main() -> None:
     parser.add_argument("--pair-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--expected-commit", required=True)
+    parser.add_argument("--arms", nargs=2, default=("baseline", "cldice"))
+    parser.add_argument("--precision-floor", type=float, default=None)
     args = parser.parse_args()
+    if args.precision_floor is not None and not 0 <= args.precision_floor <= 1:
+        parser.error("--precision-floor must be between zero and one")
     assert subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip() == args.expected_commit
     assert not subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=no"], text=True).strip()
     assert json.loads((args.pair_root / "completed.json").read_text())["complete"]
-    checkpoints = [args.pair_root / arm / "last_ema.pth" for arm in ("baseline", "cldice")]
+    checkpoints = [args.pair_root / arm / "last_ema.pth" for arm in args.arms]
     before = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in checkpoints}
     args.output.mkdir(parents=True, exist_ok=False)
     write_json(
         args.output / "provenance.json",
         dict(
             git_commit=args.expected_commit,
+            arms=args.arms,
+            requested_precision_floor=args.precision_floor,
             checkpoint_sha256=before,
             optimizer_steps=0,
             scope="native top-k PR plus all-query geometry and scores; no training",
@@ -232,7 +238,7 @@ def main() -> None:
     )
     torch.set_num_threads(2)
     summaries = {}
-    for arm, checkpoint in zip(("baseline", "cldice"), checkpoints, strict=True):
+    for arm, checkpoint in zip(args.arms, checkpoints, strict=True):
         torch.manual_seed(42)
         summaries[arm] = evaluate(
             args.pair_root / f"{arm}.yaml",
@@ -240,7 +246,9 @@ def main() -> None:
             args.output / arm,
             args.pair_root / "evaluation" / f"{arm}-last10",
         )
-    target_precision = summaries["baseline"]["fixed_0p3"]["precision"]
+    target_precision = (
+        summaries[args.arms[0]]["fixed_0p3"]["precision"] if args.precision_floor is None else args.precision_floor
+    )
     comparable = {}
     for arm in summaries:
         curve = json.loads((args.output / arm / "mask_pr_curve.json").read_text())

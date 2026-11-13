@@ -37,6 +37,10 @@ REPO = Path(__file__).resolve().parents[1]
 TIMING_DIR = REPO / "reports/tomato-20261111/runs/e1-seg-small-cldice-c0p1-v1-seed42"
 EVALUATOR = REPO / "reports/tomato-20261111/baseline-analysis/evaluate_stems.py"
 E1 = REPO / "output/output1/e1-seg-small-cldice-c0p1-v1-seed42"
+ARM_CONFIGS = {
+    "topology": (("baseline", 0.0, 1.0), ("cldice", 0.1, 1.0)),
+    "recall-beta": (("beta1", 0.1, 1.0), ("beta2", 0.1, 2.0)),
+}
 
 
 class StopAfterTen(Callback):
@@ -103,8 +107,8 @@ class StopAfterTen(Callback):
         write_json(self.output / f"audit.rank{trainer.global_rank}.json", self.audit)
 
 
-def short_config(base: dict[str, Any], output: Path, coefficient: float) -> dict[str, Any]:
-    """Change only the topology coefficient between arms; keep the 100-epoch plan intact."""
+def short_config(base: dict[str, Any], output: Path, coefficient: float, recall_beta: float = 1.0) -> dict[str, Any]:
+    """Set the explicit ablation values while keeping the 100-epoch plan intact."""
     config = copy.deepcopy(base)
     train = config["model"]["train_config"]["init_args"]
     assert train["epochs"] == 100 and train["devices"] == 2 and train["batch_size"] == 8
@@ -114,6 +118,7 @@ def short_config(base: dict[str, Any], output: Path, coefficient: float) -> dict
         mask_cldice_class_ids=[1],
         mask_cldice_iterations=25,
         mask_cldice_chunk_size=4,
+        mask_cldice_recall_beta=recall_beta,
     )
     config["trainer"] = dict(
         enable_model_summary=False,
@@ -264,7 +269,7 @@ def load_evaluator() -> Any:
     return runpy.run_path(str(EVALUATOR))["run"]
 
 
-def run(output: Path, expected_commit: str) -> None:
+def run(output: Path, expected_commit: str, comparison: str = "topology") -> None:
     """Gate the paired short runs on finite connected gradients, then evaluate both last and best EMA weights."""
     assert subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip() == expected_commit
     assert not subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=no"], text=True).strip()
@@ -272,6 +277,7 @@ def run(output: Path, expected_commit: str) -> None:
         ["nvidia-smi", "--query-compute-apps=pid", "--format=csv,noheader"], text=True
     ).strip()
     load_evaluator()
+    arms = ARM_CONFIGS[comparison]
     output.mkdir(parents=True, exist_ok=False)
     base_path = REPO / "configs/tomato/seg_small_baseline.yaml"
     base = yaml.safe_load(base_path.read_text())
@@ -290,6 +296,8 @@ def run(output: Path, expected_commit: str) -> None:
         output / "provenance.json",
         dict(
             git_commit=expected_commit,
+            comparison=comparison,
+            arms=arms,
             sha256={str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths},
             planned_epochs=10,
             scheduler_horizon=100,
@@ -330,7 +338,17 @@ def run(output: Path, expected_commit: str) -> None:
     )
     with (output / "probe.log").open("w") as log:
         subprocess.run(
-            [sys.executable, "-B", "-m", "scripts.tomato_short_ablation", "probe", "--output", str(output / "probe")],
+            [
+                sys.executable,
+                "-B",
+                "-m",
+                "scripts.tomato_short_ablation",
+                "probe",
+                "--output",
+                str(output / "probe"),
+                "--recall-beta",
+                str(max(beta for _, _, beta in arms)),
+            ],
             cwd=REPO,
             env=dict(env, CUDA_VISIBLE_DEVICES="0"),
             stdout=log,
@@ -339,10 +357,10 @@ def run(output: Path, expected_commit: str) -> None:
         )
     assert json.loads((output / "probe/completed.json").read_text())["passed"]
     print("GRADIENT_PROBE_PASSED", flush=True)
-    for name, coefficient in (("baseline", 0.0), ("cldice", 0.1)):
+    for name, coefficient, recall_beta in arms:
         assert subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip() == expected_commit
         config = output / f"{name}.yaml"
-        config.write_text(yaml.safe_dump(short_config(base, output / name, coefficient), sort_keys=False))
+        config.write_text(yaml.safe_dump(short_config(base, output / name, coefficient, recall_beta), sort_keys=False))
         train_arm(config, output / name, env)
     evaluate_pair(output, expected_commit)
 
@@ -351,8 +369,10 @@ def evaluate_pair(output: Path, expected_commit: str) -> None:
     """Evaluate an already completed pair without creating an optimizer or starting another training run."""
     assert subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip() == expected_commit
     evaluate = load_evaluator()
+    provenance = json.loads((output / "provenance.json").read_text())
+    arms = [name for name, _, _ in ARM_CONFIGS[provenance.get("comparison", "topology")]]
     for rank in (0, 1):
-        audits = [json.loads((output / name / f"audit.rank{rank}.json").read_text()) for name in ("baseline", "cldice")]
+        audits = [json.loads((output / name / f"audit.rank{rank}.json").read_text()) for name in arms]
         assert audits[0] == audits[1], "Initialization, sampled first batches, learning rates or update counts differ"
         assert audits[0]["complete"] and len(audits[0]["epochs"]) == 10
     write_json(
@@ -364,7 +384,7 @@ def evaluate_pair(output: Path, expected_commit: str) -> None:
     assert not any(evaluation.iterdir()), "Keep existing evaluation results; choose a fresh analysis before retrying"
     before_weights = {
         str(p.relative_to(output)): hashlib.sha256(p.read_bytes()).hexdigest()
-        for name in ("baseline", "cldice")
+        for name in arms
         for p in (output / name).glob("*.pth")
     }
     write_json(
@@ -380,14 +400,14 @@ def evaluate_pair(output: Path, expected_commit: str) -> None:
         ),
     )
     torch.set_num_threads(2)
-    for name in ("baseline", "cldice"):
+    for name in arms:
         for file, label in (("last_ema.pth", "last10"), ("checkpoint_best_ema.pth", "best")):
             torch.manual_seed(42)
             evaluate(output / name / file, f"{name}-{label}", evaluation, 0, "cuda")
             torch.cuda.empty_cache()
     weights = {
         str(p.relative_to(output)): hashlib.sha256(p.read_bytes()).hexdigest()
-        for name in ("baseline", "cldice")
+        for name in arms
         for p in (output / name).glob("*.pth")
     }
     assert weights == before_weights, "Evaluation changed a checkpoint"
@@ -401,7 +421,15 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--expected-commit", default="")
     parser.add_argument("--recall-beta", type=float, default=1.0, help="F-beta balance for the frozen probe only")
+    parser.add_argument(
+        "--comparison",
+        choices=tuple(ARM_CONFIGS),
+        default="topology",
+        help="Training pair: topology on/off or beta=1 versus beta=2",
+    )
     args = parser.parse_args()
+    if args.comparison != "topology" and args.action != "run":
+        parser.error("--comparison is for run; evaluate reads the archived provenance")
     if args.recall_beta != 1.0 and args.action != "probe":
         parser.error("--recall-beta is only supported for the frozen probe")
     if args.action == "probe":
@@ -409,7 +437,7 @@ def main() -> None:
     elif args.action == "evaluate":
         evaluate_pair(args.output, args.expected_commit)
     else:
-        run(args.output, args.expected_commit)
+        run(args.output, args.expected_commit, args.comparison)
 
 
 if __name__ == "__main__":
