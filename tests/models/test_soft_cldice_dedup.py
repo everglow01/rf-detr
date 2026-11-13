@@ -15,9 +15,12 @@ from rfdetr.models.soft_cldice import _soft_skeleton, soft_cldice_loss
 from tests.models.test_soft_cldice_integration import _batch, _criterion
 
 
+@pytest.mark.parametrize("chunk_size", [0, 4])
 @pytest.mark.parametrize("iterations", [10, 25])
 @pytest.mark.parametrize("lazy", [False, True])
-def test_group_dedup_preserves_loss_and_gradient(iterations: int, lazy: bool, mocker: MockerFixture) -> None:
+def test_group_dedup_preserves_loss_and_gradient(
+    iterations: int, lazy: bool, chunk_size: int, mocker: MockerFixture
+) -> None:
     """Reordered, repeated matches retain values and gradients without rebuilding GT on backward."""
     torch.manual_seed(91)
     outputs, targets = _batch((1, 0, 1, 1, 1, 2), height=31, width=35)
@@ -54,6 +57,8 @@ def test_group_dedup_preserves_loss_and_gradient(iterations: int, lazy: bool, mo
     expected_grads = torch.autograd.grad(expected, tensors, retain_graph=True)
     criterion = _criterion(groups=13)
     criterion.mask_cldice_iterations = iterations
+    criterion.mask_cldice_chunk_size = chunk_size
+    image_loss = mocker.spy(criterion, "_cldice_on_image")
     spy = mocker.spy(criterion_module, "_soft_skeleton")
     actual = criterion.loss_mask_cldice(outputs, targets, [(source_indices, target_indices)])["loss_mask_cldice"]
     actual_grads = torch.autograd.grad(actual, tensors)
@@ -63,6 +68,8 @@ def test_group_dedup_preserves_loss_and_gradient(iterations: int, lazy: bool, mo
     assert spy.call_count == 1
     assert spy.call_args.args[0].shape == (2, 1, 31, 35)
     assert not spy.call_args.args[0].requires_grad
+    if chunk_size:
+        assert max(call.args[0].shape[0] for call in image_loss.call_args_list) <= chunk_size
 
 
 def test_precomputed_skeleton_preserves_fp64_and_detaches_targets() -> None:

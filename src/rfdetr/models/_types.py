@@ -110,3 +110,4 @@ class BuilderArgs(Protocol):
     mask_cldice_loss_coef: float
     mask_cldice_class_ids: list[int]
     mask_cldice_iterations: int
+    mask_cldice_chunk_size: int

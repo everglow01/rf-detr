@@ -547,6 +547,7 @@ class SetCriterion(nn.Module):
         mask_cldice_class_ids: list[int] | None = None,
         mask_cldice_iterations: int = 10,
         query_point_class_ids: list[int] | None = None,
+        mask_cldice_chunk_size: int = 0,
     ) -> None:
         """Create the criterion.
 
@@ -559,6 +560,7 @@ class SetCriterion(nn.Module):
             group_detr: Number of groups to speed detr training. Default is 1.
             mask_cldice_class_ids: GT classes selected for the optional final-layer topology loss.
             mask_cldice_iterations: Number of additional soft-skeleton erosion steps.
+            mask_cldice_chunk_size: Maximum matches per topology checkpoint; zero keeps whole-image computation.
             query_point_class_ids: GT classes receiving one visible point coordinate loss per final match.
         """
         super().__init__()
@@ -582,6 +584,9 @@ class SetCriterion(nn.Module):
                 raise ValueError("query_point_head requires sum_group_losses=False (group averaging)")
         self.mask_cldice_class_ids = tuple(mask_cldice_class_ids or [])
         self.mask_cldice_iterations = mask_cldice_iterations
+        if mask_cldice_chunk_size < 0:
+            raise ValueError("mask_cldice_chunk_size must be nonnegative")
+        self.mask_cldice_chunk_size = mask_cldice_chunk_size
         if weight_dict.get("loss_mask_cldice", 0.0) > 0:
             if not self.mask_cldice_class_ids or any(
                 label < 0 or label >= num_classes for label in self.mask_cldice_class_ids
@@ -1153,21 +1158,26 @@ class SetCriterion(nn.Module):
                     )
                     + pred_masks["bias"]
                 )
-            if torch.is_grad_enabled() and logits.requires_grad:
-                numerator = numerator + checkpoint(
-                    self._cldice_on_image,
-                    logits,
-                    masks,
-                    padding[batch_index],
-                    target_skeletons,
-                    target_inverse,
-                    use_reentrant=False,
-                    preserve_rng_state=False,
-                )
-            else:
-                numerator = numerator + self._cldice_on_image(
-                    logits, masks, padding[batch_index], target_skeletons, target_inverse
-                )
+            # Slice only independent prediction-skeleton work. GT caching and the
+            # repeated-match denominator remain shared across every chunk.
+            chunk_size = self.mask_cldice_chunk_size or logits.shape[0]
+            for start in range(0, logits.shape[0], chunk_size):
+                chunk = slice(start, start + chunk_size)
+                if torch.is_grad_enabled() and logits.requires_grad:
+                    numerator = numerator + checkpoint(
+                        self._cldice_on_image,
+                        logits[chunk],
+                        masks[chunk],
+                        padding[batch_index],
+                        target_skeletons,
+                        target_inverse[chunk],
+                        use_reentrant=False,
+                        preserve_rng_state=False,
+                    )
+                else:
+                    numerator = numerator + self._cldice_on_image(
+                        logits[chunk], masks[chunk], padding[batch_index], target_skeletons, target_inverse[chunk]
+                    )
         count = numerator.new_tensor(selected_count)
         if is_dist_avail_and_initialized():
             torch.distributed.all_reduce(count)

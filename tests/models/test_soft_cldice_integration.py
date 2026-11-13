@@ -79,13 +79,18 @@ class TestClDiceConfig:
         tc = SegmentationTrainConfig(dataset_dir="/tmp")
         assert tc.mask_cldice_loss_coef == 0
         assert tc.mask_cldice_class_ids == []
+        assert tc.mask_cldice_chunk_size == 0
         criterion, _ = build_criterion_from_config(RFDETRSegNanoConfig(device="cpu"), tc)
         assert not any("cldice" in key for key in criterion.weight_dict)
 
     def test_config_roundtrip_and_final_layer_only(self) -> None:
         """Only one final-layer weight is registered; matcher costs stay unchanged."""
         tc = SegmentationTrainConfig(
-            dataset_dir="/tmp", mask_cldice_loss_coef=0.2, mask_cldice_class_ids=[1], mask_cldice_iterations=3
+            dataset_dir="/tmp",
+            mask_cldice_loss_coef=0.2,
+            mask_cldice_class_ids=[1],
+            mask_cldice_iterations=3,
+            mask_cldice_chunk_size=4,
         )
         restored = SegmentationTrainConfig.model_validate_json(tc.model_dump_json())
         mc = RFDETRSegNanoConfig(num_classes=3, device="cpu")
@@ -96,6 +101,7 @@ class TestClDiceConfig:
         assert criterion.weight_dict == {**base.weight_dict, "loss_mask_cldice": 0.2}
         assert criterion.mask_cldice_class_ids == (1,)
         assert criterion.mask_cldice_iterations == 3
+        assert ns.mask_cldice_chunk_size == criterion.mask_cldice_chunk_size == 4
         assert criterion.matcher.cost_mask_dice == base.matcher.cost_mask_dice
         assert criterion.state_dict().keys() == base.state_dict().keys()
 
@@ -121,6 +127,11 @@ class TestClDiceConfig:
         """Negative skeleton depth is rejected at configuration time."""
         with pytest.raises(ValueError):
             SegmentationTrainConfig(dataset_dir="/tmp", mask_cldice_iterations=-1)
+
+    def test_invalid_chunk_size(self) -> None:
+        """A negative query chunk cannot define a valid computation partition."""
+        with pytest.raises(ValueError):
+            SegmentationTrainConfig(dataset_dir="/tmp", mask_cldice_chunk_size=-1)
 
     def test_sum_group_mode_rejected(self) -> None:
         """The initial experiment supports group averaging explicitly."""
@@ -346,20 +357,23 @@ class _DDPMasks(nn.Module):
         return self.logits * 1
 
 
-def _ddp_worker(rank: int, rendezvous: str, output_dir: str, labels: tuple[int, int]) -> None:
+def _ddp_worker(rank: int, rendezvous: str, output_dir: str, labels: tuple[int, int], chunk_size: int) -> None:
     """Compare rank gradients after DDP reduction, including a rank without stems.
 
     Examples:
         Requires two spawned distributed processes:
-        >>> _ddp_worker(0, 'file:///tmp/init', '/tmp', (1, 0))  # doctest: +SKIP
+        >>> _ddp_worker(0, 'file:///tmp/init', '/tmp', (1, 0), 4)  # doctest: +SKIP
     """
     torch.set_num_threads(1)
     dist.init_process_group("gloo", init_method=rendezvous, rank=rank, world_size=2, timeout=timedelta(seconds=40))
     try:
         model = DistributedDataParallel(_DDPMasks())
         outputs, targets = _batch((labels[rank],))
-        outputs["pred_masks"] = model()
-        loss = _criterion()(outputs, targets)["loss_mask_cldice"]
+        outputs["pred_masks"] = model().expand(-1, 13, -1, -1)
+        outputs["pred_logits"] = outputs["pred_logits"].expand(-1, 13, -1)
+        criterion = _criterion(groups=13)
+        criterion.mask_cldice_chunk_size = chunk_size
+        loss = criterion(outputs, targets)["loss_mask_cldice"]
         loss.backward()
         torch.save({"loss": loss.detach(), "grad": model.module.logits.grad}, Path(output_dir) / f"rank{rank}.pt")
     finally:
@@ -370,11 +384,12 @@ class TestClDiceDDP:
     """Distributed mean must equal the corresponding serial stem-instance mean."""
 
     @pytest.mark.ddp
+    @pytest.mark.parametrize("chunk_size", [0, 4])
     @pytest.mark.parametrize("labels", [(1, 1), (1, 0), (0, 0)])
-    def test_cpu_two_rank_matches_serial(self, tmp_path: Path, labels: tuple[int, int]) -> None:
+    def test_cpu_two_rank_matches_serial(self, tmp_path: Path, labels: tuple[int, int], chunk_size: int) -> None:
         """All ranks participate even when their local selected count is zero."""
         torch.multiprocessing.spawn(
-            _ddp_worker, args=((tmp_path / "init").as_uri(), str(tmp_path), labels), nprocs=2, join=True
+            _ddp_worker, args=((tmp_path / "init").as_uri(), str(tmp_path), labels, chunk_size), nprocs=2, join=True
         )
         logits = torch.zeros(1, 9, 11, requires_grad=True)
         _, targets = _batch((1,))
