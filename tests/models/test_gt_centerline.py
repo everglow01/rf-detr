@@ -45,13 +45,18 @@ def test_mode_roundtrip_registers_only_distinct_final_loss(mode: str) -> None:
     defaults = SegmentationTrainConfig(dataset_dir="/tmp")
     assert defaults.mask_cldice_mode == "cldice" and defaults.mask_cldice_loss_coef == 0
     enabled = SegmentationTrainConfig(
-        dataset_dir="/tmp", mask_cldice_mode=mode, mask_cldice_loss_coef=0.1, mask_cldice_class_ids=[1]
+        dataset_dir="/tmp",
+        mask_cldice_mode=mode,
+        mask_cldice_loss_coef=0.1,
+        mask_cldice_class_ids=[1],
+        mask_region_precision_weight=0.25,
     )
     restored = SegmentationTrainConfig.model_validate_json(enabled.model_dump_json())
     model = RFDETRSegNanoConfig(num_classes=3, device="cpu")
     criterion, _ = build_criterion_from_config(model, restored)
     baseline, _ = build_criterion_from_config(model, defaults)
     assert criterion.mask_cldice_mode == mode
+    assert criterion.mask_region_precision_weight == 0.25
     assert criterion.weight_dict == {**baseline.weight_dict, f"loss_mask_{mode}": 0.1}
     assert criterion.state_dict().keys() == baseline.state_dict().keys()
 
@@ -62,6 +67,7 @@ def test_zero_coefficient_preserves_values_gradients_rng(mode: str, monkeypatch:
     original = _criterion(0)
     disabled = _criterion(0)
     disabled.mask_cldice_mode = mode
+    disabled.mask_region_precision_weight = 0.1
     monkeypatch.setattr(disabled, "loss_mask_cldice", lambda *args: pytest.fail("disabled loss executed"))
     outputs, targets = _batch()
     del outputs["mask_padding"]
@@ -93,6 +99,7 @@ def test_stem_only_group_chunk_gradient_and_gt_reuse(lazy: bool, mode: str, monk
         outputs["pred_masks"] = logits
     criterion = _criterion(groups=13)
     criterion.mask_cldice_mode = mode
+    criterion.mask_region_precision_weight = 0.25
     criterion.mask_cldice_iterations = 25
     criterion.mask_cldice_chunk_size = 4
     criterion.weight_dict = {f"loss_mask_{mode}": 0.1}
@@ -110,7 +117,7 @@ def test_stem_only_group_chunk_gradient_and_gt_reuse(lazy: bool, mode: str, monk
         gt_centerline_loss(logits[0, 1::3], skeleton.repeat(13, 1, 1))
         if mode == "gt_centerline"
         else region_centerline_loss(
-            logits[0, 1::3], targets[0]["masks"][1:2].repeat(13, 1, 1), skeleton.repeat(13, 1, 1)
+            logits[0, 1::3], targets[0]["masks"][1:2].repeat(13, 1, 1), skeleton.repeat(13, 1, 1), precision_weight=0.25
         )
     ).mean()
     grad = torch.autograd.grad(actual, logits, retain_graph=True)[0]
@@ -150,3 +157,33 @@ def test_region_precision_survives_saturated_centerline(dtype: torch.dtype) -> N
     assert (
         torch.autograd.grad(region_centerline_loss(empty, target[:0], target[:0]).sum(), logits)[0].count_nonzero() == 0
     )
+
+
+@pytest.mark.parametrize("weight", [0.0, 0.05, 0.1, 0.25, 0.5, 1.0])
+def test_reduced_precision_weight_matches_analytical_derivative(weight: float) -> None:
+    """The harmonic balance reduces exterior pressure relative to centerline without reversing pixel signs."""
+    logits = torch.zeros(1, 1, 3, dtype=torch.float64, requires_grad=True)
+    target = torch.tensor([[[1.0, 1.0, 0.0]]], dtype=torch.float64)
+    skeleton = torch.tensor([[[1.0, 0.0, 0.0]]], dtype=torch.float64)
+    precision, coverage = 0.8, 0.75
+    denom = (precision + weight * coverage) ** 2
+    dp = -(1 + weight) * weight * coverage**2 / denom
+    dr = -(1 + weight) * precision**2 / denom
+    actual = region_centerline_loss(logits, target, skeleton, precision_weight=weight)
+    gradient = torch.autograd.grad(actual.sum(), logits)[0]
+    expected = torch.tensor([[[dp * 0.02 + dr * 0.125, dp * 0.02, dp * -0.08]]], dtype=torch.float64)
+    torch.testing.assert_close(gradient, expected)
+    if weight == 0:
+        reference = gt_centerline_loss(logits, skeleton)
+        torch.testing.assert_close(actual, reference, atol=0, rtol=0)
+        torch.testing.assert_close(gradient, torch.autograd.grad(reference.sum(), logits)[0], atol=0, rtol=0)
+    assert gradient[0, 0, 0] < 0 and gradient[0, 0, 2] >= 0
+
+
+@pytest.mark.parametrize("weight", [-0.1, 1.1, float("nan"), float("inf")])
+def test_invalid_precision_weight_is_rejected(weight: float) -> None:
+    """Both public config and the primitive reject weights outside the requested reduction range."""
+    with pytest.raises(ValueError):
+        SegmentationTrainConfig(dataset_dir="/tmp", mask_region_precision_weight=weight)
+    with pytest.raises(ValueError):
+        region_centerline_loss(torch.zeros(1, 1, 1), torch.ones(1, 1, 1), torch.ones(1, 1, 1), precision_weight=weight)

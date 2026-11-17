@@ -234,3 +234,52 @@ def dense_geometry(
         crops[prefix + "_probability"] = probability[first, y0:y1, x0:x1].half().cpu().numpy()
         crops[prefix + "_bounds"] = torch.tensor([y0, y1, x0, x1, int(queries[first])]).numpy()
     return rows, crops
+
+
+def dense_probe_losses(probability: Tensor, truth: Tensor, skeleton: Tensor, valid: Tensor) -> dict[str, Tensor]:
+    """Return per-query mean deficits/mass on frozen error regions; an empty region has connected zero loss."""
+    prediction = probability.detach() >= 0.5
+    exterior = (~truth.bool() & valid).expand_as(prediction)
+    missing = skeleton.bool() & valid & ~prediction
+    false_positive = exterior & prediction
+    return {
+        "dense_center_missing": ((1 - probability) * missing).sum((1, 2)) / missing.sum((1, 2)).clamp(min=1),
+        "dense_exterior": (probability * exterior).sum((1, 2)) / exterior.sum((1, 2)).clamp(min=1),
+        "dense_false_positive": (probability * false_positive).sum((1, 2)) / false_positive.sum((1, 2)).clamp(min=1),
+    }
+
+
+def dense_objective_gradients(
+    outputs: dict[str, Any],
+    targets: list[dict[str, Tensor]],
+    indices: list[tuple[Tensor, Tensor]],
+    cases: list[dict[str, Any]],
+    padding: Tensor,
+    features: Tensor,
+) -> dict[str, Tensor]:
+    """Measure shared-feature derivatives for missing centerlines and exterior mass on the fixed selected queries."""
+    masks = outputs["pred_masks"]
+    result: dict[str, Tensor] = {}
+    for bi, (case, target, (sources, truths)) in enumerate(zip(cases, targets, indices, strict=True)):
+        queries = sources[truths == case["target_index"]].to(masks["query_features"].device)
+        gt = target["masks"][case["target_index"]].bool()
+        height, width = gt.shape
+        valid = ~padding[bi, :height, :width]
+        gt = gt & valid
+        with torch.no_grad():
+            skeleton = _soft_skeleton(gt.float()[None, None], 25)[0, 0] > 0
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            logits = (
+                torch.einsum("chw,nc->nhw", masks["spatial_features"][bi], masks["query_features"][bi, queries])
+                + masks["bias"]
+            )
+        logits = F.interpolate(logits.float()[:, None], size=padding.shape[-2:], mode="bilinear", align_corners=False)[
+            :, 0, :height, :width
+        ]
+        probability = logits.masked_fill(~valid, -torch.inf).sigmoid()
+        for key, values in dense_probe_losses(probability, gt, skeleton, valid).items():
+            gradient = torch.autograd.grad(values.mean(), features, retain_graph=True)[0]
+            assert torch.isfinite(gradient).all() and not bool(gradient[:-1].any())
+            value = gradient[-1].float().cpu()
+            result[key] = result[key] + value if key in result else value
+    return result

@@ -1021,6 +1021,7 @@ def build_criterion_and_postprocessors(args: "BuilderArgs") -> tuple[SetCriterio
             mask_cldice_chunk_size=getattr(args, "mask_cldice_chunk_size", 0),
             mask_cldice_recall_beta=getattr(args, "mask_cldice_recall_beta", 1.0),
             mask_cldice_mode=getattr(args, "mask_cldice_mode", "cldice"),
+            mask_region_precision_weight=getattr(args, "mask_region_precision_weight", 1.0),
             query_point_class_ids=getattr(args, "query_point_class_ids", []),
             num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
         )

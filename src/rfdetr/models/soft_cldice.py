@@ -164,23 +164,32 @@ def gt_centerline_loss(logits: Tensor, target_skeleton: Tensor, *, smooth: float
     return 1 - ((probabilities * skeleton).sum((1, 2)) + smooth) / (skeleton.sum((1, 2)) + smooth)
 
 
-def region_centerline_loss(logits: Tensor, targets: Tensor, target_skeleton: Tensor, *, smooth: float = 1.0) -> Tensor:
-    """Combine region precision and GT centerline coverage with an F1 harmonic score.
+def region_centerline_loss(
+    logits: Tensor, targets: Tensor, target_skeleton: Tensor, *, smooth: float = 1.0, precision_weight: float = 1.0
+) -> Tensor:
+    """Combine region precision and GT centerline coverage with a weighted harmonic score.
 
     All inputs have shape (N, H, W) on the valid GT grid. Targets and the precomputed GT skeleton are detached.
     FP16/BF16 compute in FP32, while FP64 stays FP64. Unlike clDice, precision uses the entire predicted probability
     mass, without predicting a skeleton. This is a distinct loss, not an equivalent optimization. Empty batches stay
     connected; an empty skeleton still permits a region penalty. The adapter excludes empty GT instances and padding
-    before calling this function.
+    before calling this function. Precision weight lies in [0, 1]: one preserves F1, zero is exactly GT-only coverage,
+    and smaller values reduce precision relative to coverage.
     """
     if logits.ndim != 3 or targets.shape != logits.shape or target_skeleton.shape != logits.shape:
         raise ValueError("logits, targets and target_skeleton must have the same (N, H, W) shape")
     if not math.isfinite(smooth) or smooth <= 0:
         raise ValueError("smooth must be positive and finite")
+    if not math.isfinite(precision_weight) or not 0 <= precision_weight <= 1:
+        raise ValueError("precision_weight must be finite and in [0, 1]")
+    if precision_weight == 0:
+        return gt_centerline_loss(logits, target_skeleton, smooth=smooth)
     dtype = torch.float64 if logits.dtype == torch.float64 else torch.float32
     probabilities = logits.to(dtype=dtype).sigmoid()
     labels = targets.detach().to(dtype=dtype)
     skeleton = target_skeleton.detach().to(dtype=dtype)
     precision = ((probabilities * labels).sum((1, 2)) + smooth) / (probabilities.sum((1, 2)) + smooth)
     coverage = ((probabilities * skeleton).sum((1, 2)) + smooth) / (skeleton.sum((1, 2)) + smooth)
-    return 1 - 2 * precision * coverage / (precision + coverage)
+    if precision_weight == 1:
+        return 1 - 2 * precision * coverage / (precision + coverage)
+    return 1 - (1 + precision_weight) * precision * coverage / (precision + precision_weight * coverage)

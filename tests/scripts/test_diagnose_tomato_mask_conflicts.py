@@ -11,6 +11,7 @@ from scripts.diagnose_tomato_decoder_gradients import feature_gradient
 from scripts.diagnose_tomato_mask_conflicts import (
     attribute_mask_gradients,
     capture_mask_points,
+    dense_probe_losses,
     geometry_stats,
     point_regions,
 )
@@ -73,3 +74,22 @@ def test_regions_and_dense_errors_separate_center_omission_from_exterior_fp() ->
     assert stats["center_missing"] == stats["fn_pixels"] == stats["fp_pixels"] == 1
     assert stats["center_saturated_pixels"] == 2
     assert stats["gt_dense_logit_gradient_l1"] == 0
+
+
+def test_dense_objectives_have_expected_pixel_directions_and_exclude_padding() -> None:
+    """The diagnostic must separately measure centerline omissions, actual FP, and all exterior mass."""
+    p = torch.tensor([[[0.2, 0.8, 0.7, 0.1, 0.9]]], requires_grad=True)
+    gt = torch.tensor([[True, True, False, False, False]])
+    valid = torch.tensor([[True, True, True, True, False]])
+    losses = dense_probe_losses(p, gt, gt, valid)
+    expected = {
+        "dense_center_missing": [-1.0, 0.0, 0.0, 0.0, 0.0],
+        "dense_false_positive": [0.0, 0.0, 1.0, 0.0, 0.0],
+        "dense_exterior": [0.0, 0.0, 0.5, 0.5, 0.0],
+    }
+    for key, gradient in expected.items():
+        actual = torch.autograd.grad(losses[key].sum(), p, retain_graph=True)[0]
+        torch.testing.assert_close(actual, torch.tensor([[gradient]]))
+    empty = dense_probe_losses(p, gt, gt, torch.zeros_like(valid))
+    assert all(value.item() == 0 for value in empty.values())
+    assert torch.autograd.grad(sum(value.sum() for value in empty.values()), p)[0].count_nonzero() == 0

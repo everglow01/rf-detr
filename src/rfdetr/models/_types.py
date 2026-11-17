@@ -113,3 +113,4 @@ class BuilderArgs(Protocol):
     mask_cldice_chunk_size: int
     mask_cldice_recall_beta: float
     mask_cldice_mode: str
+    mask_region_precision_weight: float

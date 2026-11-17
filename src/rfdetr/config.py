@@ -1905,6 +1905,7 @@ class SegmentationTrainConfig(TrainConfig):
         mask_cldice_chunk_size: Matches per topology checkpoint; zero processes the whole image.
         mask_cldice_recall_beta: Centerline F-beta balance, used only in cldice mode.
         mask_cldice_mode: Select cldice, GT-only coverage, or region precision with GT coverage.
+        mask_region_precision_weight: Relative precision weight in region_centerline only; one preserves F1.
         cls_loss_coef: Classification loss weight. Defaults to ``1.0`` to match the
             effective pre-v1.7 value (the v1.7 TrainConfig ownership migration
             silently activated a dormant ``5.0``; this field restores the correct
@@ -1922,6 +1923,7 @@ class SegmentationTrainConfig(TrainConfig):
     mask_cldice_chunk_size: int = Field(default=0, ge=0)
     mask_cldice_recall_beta: float = Field(default=1.0, gt=0, allow_inf_nan=False)
     mask_cldice_mode: Literal["cldice", "gt_centerline", "region_centerline"] = "cldice"
+    mask_region_precision_weight: float = Field(default=1.0, ge=0, le=1, allow_inf_nan=False)
     cls_loss_coef: float = 1.0
 
     @model_validator(mode="after")
