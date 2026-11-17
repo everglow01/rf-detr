@@ -236,17 +236,25 @@ def dense_geometry(
     return rows, crops
 
 
-def dense_probe_losses(probability: Tensor, truth: Tensor, skeleton: Tensor, valid: Tensor) -> dict[str, Tensor]:
+def dense_probe_losses(
+    probability: Tensor, truth: Tensor, skeleton: Tensor, valid: Tensor, *, margins: tuple[int, ...] = ()
+) -> dict[str, Tensor]:
     """Return per-query mean deficits/mass on frozen error regions; an empty region has connected zero loss."""
     prediction = probability.detach() >= 0.5
     exterior = (~truth.bool() & valid).expand_as(prediction)
     missing = skeleton.bool() & valid & ~prediction
     false_positive = exterior & prediction
-    return {
+    losses = {
         "dense_center_missing": ((1 - probability) * missing).sum((1, 2)) / missing.sum((1, 2)).clamp(min=1),
         "dense_exterior": (probability * exterior).sum((1, 2)) / exterior.sum((1, 2)).clamp(min=1),
         "dense_false_positive": (probability * false_positive).sum((1, 2)) / false_positive.sum((1, 2)).clamp(min=1),
     }
+
+    for radius in margins:
+        dilated = F.max_pool2d(truth.float()[None, None], 2 * radius + 1, stride=1, padding=radius)[0, 0].bool()
+        far_fp = false_positive & ~dilated
+        losses[f"dense_far_fp_{radius}"] = (probability * far_fp).sum((1, 2)) / far_fp.sum((1, 2)).clamp(min=1)
+    return losses
 
 
 def dense_objective_gradients(
@@ -256,6 +264,8 @@ def dense_objective_gradients(
     cases: list[dict[str, Any]],
     padding: Tensor,
     features: Tensor,
+    *,
+    margins: tuple[int, ...] = (),
 ) -> dict[str, Tensor]:
     """Measure shared-feature derivatives for missing centerlines and exterior mass on the fixed selected queries."""
     masks = outputs["pred_masks"]
@@ -277,7 +287,7 @@ def dense_objective_gradients(
             :, 0, :height, :width
         ]
         probability = logits.masked_fill(~valid, -torch.inf).sigmoid()
-        for key, values in dense_probe_losses(probability, gt, skeleton, valid).items():
+        for key, values in dense_probe_losses(probability, gt, skeleton, valid, margins=margins).items():
             gradient = torch.autograd.grad(values.mean(), features, retain_graph=True)[0]
             assert torch.isfinite(gradient).all() and not bool(gradient[:-1].any())
             value = gradient[-1].float().cpu()

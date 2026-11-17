@@ -93,3 +93,15 @@ def test_dense_objectives_have_expected_pixel_directions_and_exclude_padding() -
     empty = dense_probe_losses(p, gt, gt, torch.zeros_like(valid))
     assert all(value.item() == 0 for value in empty.values())
     assert torch.autograd.grad(sum(value.sum() for value in empty.values()), p)[0].count_nonzero() == 0
+
+
+def test_far_false_positive_probe_uses_fixed_radius_and_excludes_padding() -> None:
+    """The auxiliary far-FP diagnostic must not silently count near-boundary or padded predictions."""
+    p = torch.tensor([[[0.7, 0.1, 0.1, 0.2, 0.8, 0.1, 0.9]]], requires_grad=True)
+    gt = torch.tensor([[False, False, False, True, False, False, False]])
+    valid = torch.tensor([[True, True, True, True, True, True, False]])
+    losses = dense_probe_losses(p, gt, gt, valid, margins=(1, 3))
+    gradient = torch.autograd.grad(losses["dense_far_fp_1"].sum(), p, retain_graph=True)[0]
+    torch.testing.assert_close(gradient, torch.tensor([[[1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]]))
+    assert losses["dense_far_fp_3"].item() == 0
+    assert torch.autograd.grad(losses["dense_far_fp_3"].sum(), p)[0].count_nonzero() == 0

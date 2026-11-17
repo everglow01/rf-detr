@@ -551,6 +551,7 @@ class SetCriterion(nn.Module):
         mask_cldice_recall_beta: float = 1.0,
         mask_cldice_mode: str = "cldice",
         mask_region_precision_weight: float = 1.0,
+        mask_region_margin: int = 0,
     ) -> None:
         """Create the criterion.
 
@@ -567,6 +568,7 @@ class SetCriterion(nn.Module):
             mask_cldice_recall_beta: Centerline F-beta balance, used only in cldice mode.
             mask_cldice_mode: Select full clDice, GT coverage, or region precision with GT coverage.
             mask_region_precision_weight: Relative precision weight in region_centerline, in [0, 1].
+            mask_region_margin: Exterior precision ignore-band radius on the original GT grid.
             query_point_class_ids: GT classes receiving one visible point coordinate loss per final match.
         """
         super().__init__()
@@ -600,6 +602,9 @@ class SetCriterion(nn.Module):
         if not 0 <= mask_region_precision_weight <= 1:
             raise ValueError("mask_region_precision_weight must be in [0, 1]")
         self.mask_region_precision_weight = mask_region_precision_weight
+        if mask_region_margin < 0:
+            raise ValueError("mask_region_margin must be nonnegative")
+        self.mask_region_margin = mask_region_margin
         if weight_dict.get(self.mask_topology_loss_key, 0.0) > 0:
             if not self.mask_cldice_class_ids or any(
                 label < 0 or label >= num_classes for label in self.mask_cldice_class_ids
@@ -1075,7 +1080,11 @@ class SetCriterion(nn.Module):
         aligned = aligned.masked_fill(padding[:height, :width], -torch.inf)
         if self.mask_cldice_mode == "region_centerline":
             return region_centerline_loss(
-                aligned, masks, target_skeletons[target_inverse], precision_weight=self.mask_region_precision_weight
+                aligned,
+                masks,
+                target_skeletons[target_inverse],
+                precision_weight=self.mask_region_precision_weight,
+                margin=self.mask_region_margin,
             ).sum()
         if self.mask_cldice_mode == "gt_centerline":
             return gt_centerline_loss(aligned, target_skeletons[target_inverse]).sum()

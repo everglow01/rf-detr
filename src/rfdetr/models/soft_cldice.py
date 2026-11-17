@@ -165,7 +165,13 @@ def gt_centerline_loss(logits: Tensor, target_skeleton: Tensor, *, smooth: float
 
 
 def region_centerline_loss(
-    logits: Tensor, targets: Tensor, target_skeleton: Tensor, *, smooth: float = 1.0, precision_weight: float = 1.0
+    logits: Tensor,
+    targets: Tensor,
+    target_skeleton: Tensor,
+    *,
+    smooth: float = 1.0,
+    precision_weight: float = 1.0,
+    margin: int = 0,
 ) -> Tensor:
     """Combine region precision and GT centerline coverage with a weighted harmonic score.
 
@@ -174,7 +180,9 @@ def region_centerline_loss(
     mass, without predicting a skeleton. This is a distinct loss, not an equivalent optimization. Empty batches stay
     connected; an empty skeleton still permits a region penalty. The adapter excludes empty GT instances and padding
     before calling this function. Precision weight lies in [0, 1]: one preserves F1, zero is exactly GT-only coverage,
-    and smaller values reduce precision relative to coverage.
+    and smaller values reduce precision relative to coverage. A nonnegative margin in GT-grid pixels excludes the
+    exterior Chebyshev boundary band from precision only; it never rewards that band as GT. Margin zero preserves the
+    previous loss exactly. Native CE/Dice must continue to use the original GT.
     """
     if logits.ndim != 3 or targets.shape != logits.shape or target_skeleton.shape != logits.shape:
         raise ValueError("logits, targets and target_skeleton must have the same (N, H, W) shape")
@@ -182,13 +190,21 @@ def region_centerline_loss(
         raise ValueError("smooth must be positive and finite")
     if not math.isfinite(precision_weight) or not 0 <= precision_weight <= 1:
         raise ValueError("precision_weight must be finite and in [0, 1]")
+    if margin < 0:
+        raise ValueError("margin must be nonnegative")
     if precision_weight == 0:
         return gt_centerline_loss(logits, target_skeleton, smooth=smooth)
     dtype = torch.float64 if logits.dtype == torch.float64 else torch.float32
     probabilities = logits.to(dtype=dtype).sigmoid()
     labels = targets.detach().to(dtype=dtype)
     skeleton = target_skeleton.detach().to(dtype=dtype)
-    precision = ((probabilities * labels).sum((1, 2)) + smooth) / (probabilities.sum((1, 2)) + smooth)
+    precision_mass = probabilities
+    if margin > 0 and labels.shape[0] > 0:
+        with torch.no_grad():
+            dilated = F.max_pool2d(labels[:, None], 2 * margin + 1, stride=1, padding=margin)[:, 0]
+            band = dilated.bool() & ~labels.bool()
+        precision_mass = probabilities.masked_fill(band, 0)
+    precision = ((probabilities * labels).sum((1, 2)) + smooth) / (precision_mass.sum((1, 2)) + smooth)
     coverage = ((probabilities * skeleton).sum((1, 2)) + smooth) / (skeleton.sum((1, 2)) + smooth)
     if precision_weight == 1:
         return 1 - 2 * precision * coverage / (precision + coverage)

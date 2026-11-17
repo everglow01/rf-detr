@@ -134,7 +134,7 @@ def benchmark_topology(
     targets: list[dict[str, Tensor]],
     indices: list[tuple[Tensor, Tensor]],
     features: Tensor,
-    variants: list[tuple[str, str, float | None, float]],
+    variants: list[tuple[str, str, float | None, float, int]],
 ) -> list[dict[str, Any]]:
     """Time loss construction and shared-feature backward, including GT preparation, on a retained frozen forward.
 
@@ -142,14 +142,20 @@ def benchmark_topology(
     as absolute peaks; this excludes upstream model/parameter backward and cannot predict epoch throughput.
     """
     results = []
-    original = criterion.mask_cldice_mode, criterion.mask_cldice_recall_beta, criterion.mask_region_precision_weight
+    original = (
+        criterion.mask_cldice_mode,
+        criterion.mask_cldice_recall_beta,
+        criterion.mask_region_precision_weight,
+        criterion.mask_region_margin,
+    )
     try:
         for repeat in range(-1, 5):
             shift = max(repeat, 0) % len(variants)
-            for name, mode, beta, precision_weight in variants[shift:] + variants[:shift]:
+            for name, mode, beta, precision_weight, margin in variants[shift:] + variants[:shift]:
                 criterion.mask_cldice_mode = mode
                 criterion.mask_cldice_recall_beta = beta or 1.0
                 criterion.mask_region_precision_weight = precision_weight
+                criterion.mask_region_margin = margin
                 torch.cuda.synchronize()
                 torch.cuda.reset_peak_memory_stats()
                 before = torch.cuda.memory_allocated()
@@ -174,7 +180,12 @@ def benchmark_topology(
                     )
                 del gradient, loss
     finally:
-        criterion.mask_cldice_mode, criterion.mask_cldice_recall_beta, criterion.mask_region_precision_weight = original
+        (
+            criterion.mask_cldice_mode,
+            criterion.mask_cldice_recall_beta,
+            criterion.mask_region_precision_weight,
+            criterion.mask_region_margin,
+        ) = original
     return results
 
 
@@ -188,6 +199,7 @@ def probe_batch(
     split_mask: bool = False,
     region_centerline: bool = False,
     region_precision_sweep: bool = False,
+    region_margin_probe: bool = False,
 ) -> None:
     """Hold matching and forward features fixed across all loss probes and both beta choices."""
     started = time.monotonic()
@@ -266,20 +278,29 @@ def probe_batch(
                     grads,
                 )
             )
-    variants: list[tuple[str, str, float | None, float]] = [
-        ("cldice_1", "cldice", 1.0, 1.0),
-        ("cldice_2", "cldice", 2.0, 1.0),
+    variants: list[tuple[str, str, float | None, float, int]] = [
+        ("cldice_1", "cldice", 1.0, 1.0, 0),
+        ("cldice_2", "cldice", 2.0, 1.0, 0),
     ]
     if gt_centerline:
-        variants.append(("gt_centerline", "gt_centerline", None, 0.0))
+        variants.append(("gt_centerline", "gt_centerline", None, 0.0, 0))
     if region_centerline:
-        variants.append(("region_centerline", "region_centerline", None, 1.0))
+        variants.append(("region_centerline", "region_centerline", None, 1.0, 0))
     if region_precision_sweep:
-        variants.extend((f"region_{weight:g}", "region_centerline", None, weight) for weight in (0.5, 0.25, 0.1, 0.05))
-    for name, mode, beta, precision_weight in variants:
+        variants.extend(
+            (f"region_{weight:g}", "region_centerline", None, weight, 0) for weight in (0.5, 0.25, 0.1, 0.05)
+        )
+    if region_margin_probe:
+        variants.extend(
+            (f"margin{radius}_a{weight:g}", "region_centerline", None, weight, radius)
+            for weight in (0.25, 0.1)
+            for radius in (1, 3)
+        )
+    for name, mode, beta, precision_weight, margin in variants:
         criterion.mask_cldice_mode = mode
         criterion.mask_cldice_recall_beta = beta or 1.0
         criterion.mask_region_precision_weight = precision_weight
+        criterion.mask_region_margin = margin
         with torch.autocast("cuda", dtype=torch.bfloat16):
             loss = 0.1 * criterion.loss_mask_cldice(outputs, targets, indices)[criterion.mask_topology_loss_key]
         # Complete checkpoint recomputation before changing the criterion's beta attribute.
@@ -287,7 +308,11 @@ def probe_batch(
         losses[name] = float(loss.detach())
         del loss
     if region_precision_sweep:
-        grads.update(dense_objective_gradients(outputs, targets, indices, cases, samples.mask, features))
+        grads.update(
+            dense_objective_gradients(
+                outputs, targets, indices, cases, samples.mask, features, margins=(1, 3) if region_margin_probe else ()
+            )
+        )
     assert all(parameter.grad is None for parameter in module.parameters())
     positions, metadata = [], []
     for bi, (case, target, (sources, truth)) in enumerate(zip(cases, targets, indices, strict=True)):
@@ -318,7 +343,7 @@ def probe_batch(
     np.savez_compressed(output / f"batch{batch_index}-gradients.npz", **vectors)
     rows = []
     summaries = []
-    for name, _mode, beta, precision_weight in variants:
+    for name, _mode, beta, precision_weight, margin in variants:
         for seed in (420, 421, 422):
             cls, mask, topology = grads["cls"], grads[f"mask_{seed}"], grads[name]
             summaries.append(
@@ -371,7 +396,8 @@ def probe_batch(
             num_boxes=float(normalizer),
             cldice_selected_count=sum(int((t["labels"] == 1).sum()) for t in targets) * criterion.group_detr,
             weight_dict=criterion.weight_dict,
-            region_precision_weights={name: weight for name, mode, _, weight in variants if mode != "cldice"},
+            region_precision_weights={name: weight for name, mode, _, weight, _ in variants if mode != "cldice"},
+            region_margins={name: radius for name, _, _, _, radius in variants},
             forward_bitwise_equal=True,
             parameter_gradients=False,
             seconds=time.monotonic() - started,
@@ -400,7 +426,12 @@ def main() -> None:
         action="store_true",
         help="Reduce relative region precision and probe dense error directions",
     )
+    parser.add_argument(
+        "--region-margin-probe", action="store_true", help="Compare fixed 1/3-pixel precision ignore bands"
+    )
     args = parser.parse_args()
+    if args.region_margin_probe:
+        args.region_precision_sweep = True
     if args.region_precision_sweep:
         args.region_centerline = args.split_mask = True
     if args.split_mask or args.region_centerline:
@@ -430,6 +461,8 @@ def main() -> None:
             region_centerline=args.region_centerline,
             region_precision_weights=[1.0, 0.5, 0.25, 0.1, 0.05, 0.0] if args.region_precision_sweep else None,
             dense_error_probes=args.region_precision_sweep,
+            region_margin_probe=args.region_margin_probe,
+            margin_candidates={"weights": [0.25, 0.1], "radii": [1, 3]} if args.region_margin_probe else None,
             benchmark=dict(
                 enabled=args.gt_centerline and (not args.split_mask or args.region_centerline),
                 warmup_per_variant=1,
@@ -473,6 +506,7 @@ def main() -> None:
                 args.split_mask,
                 args.region_centerline,
                 args.region_precision_sweep,
+                args.region_margin_probe,
             )
         assert hashlib.sha256(checkpoint.read_bytes()).hexdigest() == row["sha256"]
         del module, data
