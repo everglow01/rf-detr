@@ -159,6 +159,7 @@ def _namespace_from_configs(
             "mask_cldice_mode": getattr(tc, "mask_cldice_mode", "cldice"),
             "mask_region_precision_weight": getattr(tc, "mask_region_precision_weight", 1.0),
             "mask_region_margin": getattr(tc, "mask_region_margin", 0),
+            "mask_centerline_ce_radius": getattr(tc, "mask_centerline_ce_radius", 3),
             # Transformations: fields requiring a default sentinel or transitional priority.
             "cls_loss_coef": cls_loss_coef,
             "resume": tc.resume or "",

@@ -209,3 +209,59 @@ def region_centerline_loss(
     if precision_weight == 1:
         return 1 - 2 * precision * coverage / (precision + coverage)
     return 1 - (1 + precision_weight) * precision * coverage / (precision + precision_weight * coverage)
+
+
+def centerline_ce_loss(
+    logits: Tensor,
+    targets: Tensor,
+    target_skeleton: Tensor,
+    *,
+    valid_mask: Tensor | None = None,
+    include_exterior: bool = False,
+    exterior_radius: int = 3,
+) -> Tensor:
+    """Return per-instance GT-centerline CE with optional, separately averaged local negative CE.
+
+    Args:
+        logits: Dense mask logits shaped (N, H, W), aligned to the original augmented GT grid.
+        targets: Binary instance masks matching logits. Other instances remain negative for this query.
+        target_skeleton: Precomputed GT skeleton matching logits; no prediction skeleton is used.
+        valid_mask: Optional valid image mask, broadcastable to logits. Padding gets no loss or gradient.
+        include_exterior: Add negative CE on dilate(GT, radius) minus GT, with equal internal weight.
+        exterior_radius: Positive Chebyshev dilation radius in GT-grid pixels, used only for exterior CE.
+
+    Returns:
+        One loss per instance. Empty supports contribute connected zero; FP16/BF16 compute in FP32.
+
+    Notes:
+        This is a clCE-inspired experiment, not full clCE or an equivalent clDice optimization. Native region losses
+        remain necessary. GT-derived supports are detached, but all predicted logits keep their gradient path.
+    """
+    if logits.ndim != 3 or targets.shape != logits.shape or target_skeleton.shape != logits.shape:
+        raise ValueError("logits, targets and target_skeleton must have the same (N, H, W) shape")
+    if exterior_radius < 1:
+        raise ValueError("exterior_radius must be positive")
+    dtype = torch.float64 if logits.dtype == torch.float64 else torch.float32
+    values = logits.to(dtype=dtype)
+    if values.shape[0] == 0:
+        return values.flatten(1).sum(1)
+    with torch.no_grad():
+        valid = (
+            torch.ones_like(targets, dtype=torch.bool)
+            if valid_mask is None
+            else valid_mask.detach().bool().expand_as(targets)
+        )
+        labels = targets.detach().bool() & valid
+        center = target_skeleton.detach().bool() & labels
+    # Keep even unsupported padded logits finite before softplus, avoiding inf*0.
+    values = values.masked_fill(~valid, 0)
+    positive = F.softplus(-values).masked_fill(~center, 0).sum((1, 2)) / center.sum((1, 2)).clamp(min=1)
+    if not include_exterior:
+        return positive
+    with torch.no_grad():
+        dilated = F.max_pool2d(labels.to(dtype)[:, None], 2 * exterior_radius + 1, stride=1, padding=exterior_radius)[
+            :, 0
+        ]
+        exterior = dilated.bool() & ~labels & valid
+    negative = F.softplus(values).masked_fill(~exterior, 0).sum((1, 2)) / exterior.sum((1, 2)).clamp(min=1)
+    return positive + negative

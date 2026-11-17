@@ -356,7 +356,10 @@ result = subprocess.run(
 
 ### Tomato experiment development
 
+- Optional `centerline_ce` / `centerline_local_ce` reuse final stem matching and the topology adapter. They average positive GT-skeleton CE and, for the latter, negative CE in a valid exterior GT band separately; native losses stay unchanged. No prediction skeleton or detach on predictions. The outer coefficient remains zero by default.
+
 - Develop only in the user-designated `rfdetr26` checkout on `codex/tomato-topology-keypoints`. Do not treat conversation-workspace copies as development branches. Review changes with the user; do not commit or push without their explicit instruction. New server code comes from GitHub via `git pull --ff-only`, not uploaded uncommitted source bundles. Preserve already-running experiment snapshots as historical evidence. See `docs/tomato_git_workflow.md`.
+
 - E2's `ModelConfig.query_point_head` defaults to false and is independent of GroupPose. Its three-layer MLP consumes final shared queries without detach. `loss_query_point` uses existing final matches and a DDP-reduced visible selected-point count; no auxiliary or encoder point losses. Keep the detection augmentation RNG/recipe, including horizontal flips for a single point. Joint inference adds `pick_points` and `pick_point_valid` to the same mask rows. Current E2 support is experimental: torchvision, accumulation 1, segmentation, no GroupPose; exports fail explicitly. Do not claim runtime validation until the current Git version has passed it.
 
 ## Common Workflows

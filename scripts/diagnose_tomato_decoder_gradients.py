@@ -200,6 +200,7 @@ def probe_batch(
     region_centerline: bool = False,
     region_precision_sweep: bool = False,
     region_margin_probe: bool = False,
+    centerline_ce: bool = False,
 ) -> None:
     """Hold matching and forward features fixed across all loss probes and both beta choices."""
     started = time.monotonic()
@@ -296,6 +297,8 @@ def probe_batch(
             for weight in (0.25, 0.1)
             for radius in (1, 3)
         )
+    if centerline_ce:
+        variants = [(mode, mode, None, 0.0, 0) for mode in ("gt_centerline", "centerline_ce", "centerline_local_ce")]
     for name, mode, beta, precision_weight, margin in variants:
         criterion.mask_cldice_mode = mode
         criterion.mask_cldice_recall_beta = beta or 1.0
@@ -307,7 +310,7 @@ def probe_batch(
         grads[name] = feature_gradient(loss, features)
         losses[name] = float(loss.detach())
         del loss
-    if region_precision_sweep:
+    if region_precision_sweep or centerline_ce:
         grads.update(
             dense_objective_gradients(
                 outputs, targets, indices, cases, samples.mask, features, margins=(1, 3) if region_margin_probe else ()
@@ -381,7 +384,7 @@ def probe_batch(
     probe_peak = torch.cuda.max_memory_allocated() / 1024**3
     performance = (
         benchmark_topology(criterion, outputs, targets, indices, features, variants)
-        if gt_centerline and (not split_mask or region_centerline)
+        if gt_centerline and (not split_mask or region_centerline or centerline_ce)
         else []
     )
     write_json(
@@ -398,6 +401,7 @@ def probe_batch(
             weight_dict=criterion.weight_dict,
             region_precision_weights={name: weight for name, mode, _, weight, _ in variants if mode != "cldice"},
             region_margins={name: radius for name, _, _, _, radius in variants},
+            centerline_ce_radius=criterion.mask_centerline_ce_radius,
             forward_bitwise_equal=True,
             parameter_gradients=False,
             seconds=time.monotonic() - started,

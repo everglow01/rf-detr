@@ -114,4 +114,5 @@ class BuilderArgs(Protocol):
     mask_cldice_recall_beta: float
     mask_cldice_mode: str
     mask_region_precision_weight: float
+    mask_centerline_ce_radius: int
     mask_region_margin: int

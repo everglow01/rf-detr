@@ -27,7 +27,13 @@ from rfdetr.models.heads.segmentation import (
 )
 from rfdetr.models.matcher import HungarianMatcher
 from rfdetr.models.math import accuracy
-from rfdetr.models.soft_cldice import _soft_skeleton, gt_centerline_loss, region_centerline_loss, soft_cldice_loss
+from rfdetr.models.soft_cldice import (
+    _soft_skeleton,
+    centerline_ce_loss,
+    gt_centerline_loss,
+    region_centerline_loss,
+    soft_cldice_loss,
+)
 from rfdetr.utilities import box_ops
 from rfdetr.utilities.compiler import script_or_eager
 from rfdetr.utilities.distributed import get_world_size, is_dist_avail_and_initialized
@@ -552,6 +558,7 @@ class SetCriterion(nn.Module):
         mask_cldice_mode: str = "cldice",
         mask_region_precision_weight: float = 1.0,
         mask_region_margin: int = 0,
+        mask_centerline_ce_radius: int = 3,
     ) -> None:
         """Create the criterion.
 
@@ -569,6 +576,7 @@ class SetCriterion(nn.Module):
             mask_cldice_mode: Select full clDice, GT coverage, or region precision with GT coverage.
             mask_region_precision_weight: Relative precision weight in region_centerline, in [0, 1].
             mask_region_margin: Exterior precision ignore-band radius on the original GT grid.
+            mask_centerline_ce_radius: Exterior negative-band radius for local centerline CE.
             query_point_class_ids: GT classes receiving one visible point coordinate loss per final match.
         """
         super().__init__()
@@ -596,8 +604,14 @@ class SetCriterion(nn.Module):
             raise ValueError("mask_cldice_chunk_size must be nonnegative")
         self.mask_cldice_chunk_size = mask_cldice_chunk_size
         self.mask_cldice_recall_beta = mask_cldice_recall_beta
-        if mask_cldice_mode not in ("cldice", "gt_centerline", "region_centerline"):
-            raise ValueError("mask_cldice_mode must be cldice, gt_centerline or region_centerline")
+        if mask_cldice_mode not in (
+            "cldice",
+            "gt_centerline",
+            "region_centerline",
+            "centerline_ce",
+            "centerline_local_ce",
+        ):
+            raise ValueError("Unknown mask topology loss mode")
         self.mask_cldice_mode = mask_cldice_mode
         if not 0 <= mask_region_precision_weight <= 1:
             raise ValueError("mask_region_precision_weight must be in [0, 1]")
@@ -605,6 +619,9 @@ class SetCriterion(nn.Module):
         if mask_region_margin < 0:
             raise ValueError("mask_region_margin must be nonnegative")
         self.mask_region_margin = mask_region_margin
+        if mask_centerline_ce_radius < 1:
+            raise ValueError("mask_centerline_ce_radius must be positive")
+        self.mask_centerline_ce_radius = mask_centerline_ce_radius
         if weight_dict.get(self.mask_topology_loss_key, 0.0) > 0:
             if not self.mask_cldice_class_ids or any(
                 label < 0 or label >= num_classes for label in self.mask_cldice_class_ids
@@ -1077,6 +1094,15 @@ class SetCriterion(nn.Module):
         aligned = F.interpolate(logits.float().unsqueeze(1), size=padding.shape, mode="bilinear", align_corners=False)[
             :, 0, :height, :width
         ]
+        if self.mask_cldice_mode in ("centerline_ce", "centerline_local_ce"):
+            return centerline_ce_loss(
+                aligned,
+                masks,
+                target_skeletons[target_inverse],
+                valid_mask=~padding[:height, :width],
+                include_exterior=self.mask_cldice_mode == "centerline_local_ce",
+                exterior_radius=self.mask_centerline_ce_radius,
+            ).sum()
         aligned = aligned.masked_fill(padding[:height, :width], -torch.inf)
         if self.mask_cldice_mode == "region_centerline":
             return region_centerline_loss(

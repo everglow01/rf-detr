@@ -20,6 +20,7 @@ import runpy
 import subprocess
 import sys
 import time
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -209,7 +210,7 @@ def probe(output: Path, recall_beta: float = 1.0) -> None:
     print(json.dumps(result), flush=True)
 
 
-def train_arm(config: Path, output: Path, env: dict[str, str]) -> None:
+def train_arm(config: Path, output: Path, env: dict[str, str], *, stream_log: bool = False) -> None:
     """Launch the unchanged official DDP CLI and retain wall time plus GPU telemetry."""
     output.mkdir(exist_ok=False)
     command = [
@@ -230,10 +231,16 @@ def train_arm(config: Path, output: Path, env: dict[str, str]) -> None:
     write_json(
         output / "process.json", dict(command=command, config_sha256=hashlib.sha256(config.read_bytes()).hexdigest())
     )
-    with (output / "train.log").open("w") as log, (output / "gpu-samples.csv").open("w") as telemetry:
+    with (
+        (output / "train.log").open("w") as log,
+        (output / "gpu-samples.csv").open("w") as telemetry,
+        (output / "train.log").open() if stream_log else nullcontext() as live,
+    ):
         telemetry.write("elapsed_seconds,index,memory_used_mib,utilization_gpu_percent,power_watts\n")
         process = subprocess.Popen(command, cwd=REPO, env=env, stdout=log, stderr=subprocess.STDOUT)
         while process.poll() is None:
+            if live is not None:
+                print(live.read(), end="", flush=True)
             sample = subprocess.check_output(
                 [
                     "nvidia-smi",
@@ -249,6 +256,8 @@ def train_arm(config: Path, output: Path, env: dict[str, str]) -> None:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 pass
+        if live is not None:
+            print(live.read(), end="", flush=True)
     result = dict(
         command=command,
         exit_code=process.returncode,

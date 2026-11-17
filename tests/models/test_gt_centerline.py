@@ -11,7 +11,7 @@ import torch
 from rfdetr.config import RFDETRSegNanoConfig, SegmentationTrainConfig
 from rfdetr.models import criterion as criterion_module
 from rfdetr.models.lwdetr import build_criterion_from_config
-from rfdetr.models.soft_cldice import _soft_skeleton, gt_centerline_loss, region_centerline_loss
+from rfdetr.models.soft_cldice import _soft_skeleton, centerline_ce_loss, gt_centerline_loss, region_centerline_loss
 from tests.models.test_soft_cldice_integration import _batch, _criterion
 
 
@@ -39,7 +39,7 @@ def test_empty_skeleton_is_connected_zero(count: int) -> None:
     assert logits.grad is not None and logits.grad.count_nonzero() == 0
 
 
-@pytest.mark.parametrize("mode", ["gt_centerline", "region_centerline"])
+@pytest.mark.parametrize("mode", ["gt_centerline", "region_centerline", "centerline_ce", "centerline_local_ce"])
 def test_mode_roundtrip_registers_only_distinct_final_loss(mode: str) -> None:
     """The explicit mode reaches the criterion while all native weights and model state stay unchanged."""
     defaults = SegmentationTrainConfig(dataset_dir="/tmp")
@@ -59,11 +59,12 @@ def test_mode_roundtrip_registers_only_distinct_final_loss(mode: str) -> None:
     assert criterion.mask_cldice_mode == mode
     assert criterion.mask_region_precision_weight == 0.25
     assert criterion.mask_region_margin == 1
+    assert criterion.mask_centerline_ce_radius == 3
     assert criterion.weight_dict == {**baseline.weight_dict, f"loss_mask_{mode}": 0.1}
     assert criterion.state_dict().keys() == baseline.state_dict().keys()
 
 
-@pytest.mark.parametrize("mode", ["gt_centerline", "region_centerline"])
+@pytest.mark.parametrize("mode", ["gt_centerline", "region_centerline", "centerline_ce", "centerline_local_ce"])
 def test_zero_coefficient_preserves_values_gradients_rng(mode: str, monkeypatch: pytest.MonkeyPatch) -> None:
     """Choosing the mode alone cannot execute a topology branch or change baseline loss sampling."""
     original = _criterion(0)
@@ -87,7 +88,7 @@ def test_zero_coefficient_preserves_values_gradients_rng(mode: str, monkeypatch:
     torch.testing.assert_close(actual_grad, grad, rtol=0, atol=0)
 
 
-@pytest.mark.parametrize("mode", ["gt_centerline", "region_centerline"])
+@pytest.mark.parametrize("mode", ["gt_centerline", "region_centerline", "centerline_ce", "centerline_local_ce"])
 @pytest.mark.parametrize("lazy", [False, True])
 def test_stem_only_group_chunk_gradient_and_gt_reuse(lazy: bool, mode: str, monkeypatch: pytest.MonkeyPatch) -> None:
     """Thirteen repeated matches equal a direct reference; other classes receive no added gradient."""
@@ -128,6 +129,13 @@ def test_stem_only_group_chunk_gradient_and_gt_reuse(lazy: bool, mode: str, monk
             margin=1,
         )
     ).mean()
+    if mode in ("centerline_ce", "centerline_local_ce"):
+        expected = centerline_ce_loss(
+            logits[0, 1::3],
+            targets[0]["masks"][1:2].repeat(13, 1, 1),
+            skeleton.repeat(13, 1, 1),
+            include_exterior=mode == "centerline_local_ce",
+        ).mean()
     grad = torch.autograd.grad(actual, logits, retain_graph=True)[0]
     expected_grad = torch.autograd.grad(expected, logits)[0]
     torch.testing.assert_close(actual, expected)
