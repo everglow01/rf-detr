@@ -156,6 +156,7 @@ def _namespace_from_configs(
             "mask_cldice_iterations": getattr(tc, "mask_cldice_iterations", 10),
             "mask_cldice_chunk_size": getattr(tc, "mask_cldice_chunk_size", 0),
             "mask_cldice_recall_beta": getattr(tc, "mask_cldice_recall_beta", 1.0),
+            "mask_cldice_mode": getattr(tc, "mask_cldice_mode", "cldice"),
             # Transformations: fields requiring a default sentinel or transitional priority.
             "cls_loss_coef": cls_loss_coef,
             "resume": tc.resume or "",

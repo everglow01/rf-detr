@@ -136,3 +136,29 @@ def soft_cldice_loss(
     return 1 - (precision_weight + sensitivity_weight) * precision * sensitivity / (
         precision_weight * precision + sensitivity_weight * sensitivity
     )
+
+
+def gt_centerline_loss(logits: Tensor, target_skeleton: Tensor, *, smooth: float = 1.0) -> Tensor:
+    """Return one minus GT centerline coverage, without a differentiable prediction skeleton.
+
+    Args:
+        logits: Dense mask logits, shaped (N, H, W), aligned to the valid GT grid.
+        target_skeleton: Precomputed GT skeleton on the same grid, detached inside this function.
+        smooth: Positive finite stabilizer, matching clDice's sensitivity term.
+
+    Returns:
+        One loss per instance. Empty skeletons contribute zero loss and gradient. BF16/FP16 compute in FP32.
+
+    Notes:
+        This is clDice's one-sided sensitivity loss, not an equivalent clDice implementation. It has no off-centerline
+        false-positive penalty and must supplement native region losses. K applies only to upstream GT skeletonization;
+        there is no beta parameter or prediction skeleton. The gradient remains connected to the segmentation head.
+    """
+    if logits.ndim != 3 or target_skeleton.shape != logits.shape:
+        raise ValueError("logits and target_skeleton must have the same (N, H, W) shape")
+    if not math.isfinite(smooth) or smooth <= 0:
+        raise ValueError("smooth must be positive and finite")
+    dtype = torch.float64 if logits.dtype == torch.float64 else torch.float32
+    probabilities = logits.to(dtype=dtype).sigmoid()
+    skeleton = target_skeleton.detach().to(dtype=dtype)
+    return 1 - ((probabilities * skeleton).sum((1, 2)) + smooth) / (skeleton.sum((1, 2)) + smooth)

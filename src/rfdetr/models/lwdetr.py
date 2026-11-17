@@ -993,7 +993,12 @@ def build_criterion_and_postprocessors(args: "BuilderArgs") -> tuple[SetCriterio
         if not class_ids or any(label < 0 or label >= args.num_classes for label in class_ids):
             raise ValueError("mask_cldice_class_ids must select existing dataset classes")
         # Register AFTER auxiliary weight expansion: only the final decoder gets this term.
-        weight_dict["loss_mask_cldice"] = cldice_coef
+        key = (
+            "loss_mask_gt_centerline"
+            if getattr(args, "mask_cldice_mode", "cldice") == "gt_centerline"
+            else "loss_mask_cldice"
+        )
+        weight_dict[key] = cldice_coef
 
     losses = ["labels", "boxes", "cardinality"]
     if args.segmentation_head:
@@ -1019,6 +1024,7 @@ def build_criterion_and_postprocessors(args: "BuilderArgs") -> tuple[SetCriterio
             mask_cldice_iterations=getattr(args, "mask_cldice_iterations", 10),
             mask_cldice_chunk_size=getattr(args, "mask_cldice_chunk_size", 0),
             mask_cldice_recall_beta=getattr(args, "mask_cldice_recall_beta", 1.0),
+            mask_cldice_mode=getattr(args, "mask_cldice_mode", "cldice"),
             query_point_class_ids=getattr(args, "query_point_class_ids", []),
             num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
         )

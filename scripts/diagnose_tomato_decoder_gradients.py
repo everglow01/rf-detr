@@ -121,8 +121,62 @@ def feature_gradient(loss: Tensor, features: Tensor) -> Tensor:
     return gradient[-1].float().cpu()
 
 
+def benchmark_topology(
+    criterion: Any,
+    outputs: dict[str, Any],
+    targets: list[dict[str, Tensor]],
+    indices: list[tuple[Tensor, Tensor]],
+    features: Tensor,
+    variants: list[tuple[str, str, float | None]],
+) -> list[dict[str, Any]]:
+    """Time loss construction and shared-feature backward, including GT preparation, on a retained frozen forward.
+
+    Warm up each variant, rotate their order, and synchronize CUDA around wall time. Report allocated increments as well
+    as absolute peaks; this excludes upstream model/parameter backward and cannot predict epoch throughput.
+    """
+    results = []
+    original = criterion.mask_cldice_mode, criterion.mask_cldice_recall_beta
+    try:
+        for repeat in range(-1, 5):
+            shift = max(repeat, 0) % len(variants)
+            for name, mode, beta in variants[shift:] + variants[:shift]:
+                criterion.mask_cldice_mode = mode
+                criterion.mask_cldice_recall_beta = beta or 1.0
+                torch.cuda.synchronize()
+                torch.cuda.reset_peak_memory_stats()
+                before = torch.cuda.memory_allocated()
+                started = time.perf_counter()
+                with torch.autocast("cuda", dtype=torch.bfloat16):
+                    loss = 0.1 * criterion.loss_mask_cldice(outputs, targets, indices)[criterion.mask_topology_loss_key]
+                gradient = torch.autograd.grad(loss, features, retain_graph=True)[0]
+                torch.cuda.synchronize()
+                seconds = time.perf_counter() - started
+                peak = torch.cuda.max_memory_allocated()
+                assert torch.isfinite(gradient).all()
+                if repeat >= 0:
+                    results.append(
+                        dict(
+                            variant=name,
+                            repeat=repeat,
+                            seconds=seconds,
+                            allocated_before_mib=before / 1024**2,
+                            peak_allocated_mib=peak / 1024**2,
+                            extra_peak_mib=(peak - before) / 1024**2,
+                        )
+                    )
+                del gradient, loss
+    finally:
+        criterion.mask_cldice_mode, criterion.mask_cldice_recall_beta = original
+    return results
+
+
 def probe_batch(
-    module: Any, dataset: CocoDetection, cases: list[dict[str, Any]], batch_index: int, output: Path
+    module: Any,
+    dataset: CocoDetection,
+    cases: list[dict[str, Any]],
+    batch_index: int,
+    output: Path,
+    gt_centerline: bool = False,
 ) -> None:
     """Hold matching and forward features fixed across all loss probes and both beta choices."""
     started = time.monotonic()
@@ -181,13 +235,18 @@ def probe_batch(
             loss = torch.stack([value * criterion.weight_dict[key] for key, value in mask_losses.items()]).sum()
         grads[f"mask_{seed}"] = feature_gradient(loss, features)
         losses[f"mask_{seed}"] = float(loss.detach())
-    for beta in (1, 2):
-        criterion.mask_cldice_recall_beta = float(beta)
+    variants: list[tuple[str, str, float | None]] = [("cldice_1", "cldice", 1.0), ("cldice_2", "cldice", 2.0)]
+    if gt_centerline:
+        variants.append(("gt_centerline", "gt_centerline", None))
+    for name, mode, beta in variants:
+        criterion.mask_cldice_mode = mode
+        criterion.mask_cldice_recall_beta = beta or 1.0
         with torch.autocast("cuda", dtype=torch.bfloat16):
-            loss = 0.1 * criterion.loss_mask_cldice(outputs, targets, indices)["loss_mask_cldice"]
+            loss = 0.1 * criterion.loss_mask_cldice(outputs, targets, indices)[criterion.mask_topology_loss_key]
         # Complete checkpoint recomputation before changing the criterion's beta attribute.
-        grads[f"cldice_{beta}"] = feature_gradient(loss, features)
-        losses[f"cldice_{beta}"] = float(loss.detach())
+        grads[name] = feature_gradient(loss, features)
+        losses[name] = float(loss.detach())
+        del loss
     assert all(parameter.grad is None for parameter in module.parameters())
     positions, metadata = [], []
     for bi, (case, target, (sources, truth)) in enumerate(zip(cases, targets, indices, strict=True)):
@@ -218,11 +277,12 @@ def probe_batch(
     np.savez_compressed(output / f"batch{batch_index}-gradients.npz", **vectors)
     rows = []
     summaries = []
-    for beta in (1, 2):
+    for name, _mode, beta in variants:
         for seed in (420, 421, 422):
-            cls, mask, topology = grads["cls"], grads[f"mask_{seed}"], grads[f"cldice_{beta}"]
+            cls, mask, topology = grads["cls"], grads[f"mask_{seed}"], grads[name]
             summaries.append(
                 dict(
+                    variant=name,
                     beta=beta,
                     mask_seed=seed,
                     scope="all_final_queries",
@@ -231,6 +291,7 @@ def probe_batch(
             )
             summaries.append(
                 dict(
+                    variant=name,
                     beta=beta,
                     mask_seed=seed,
                     scope="selected_stem_queries",
@@ -241,11 +302,14 @@ def probe_batch(
                 rows.append(
                     dict(
                         **metadata[j],
+                        variant=name,
                         beta=beta,
                         mask_seed=seed,
                         metrics=measures(cls[b, q], mask[b, q], topology[b, q], logit_jacobian[b, q]),
                     )
                 )
+    probe_peak = torch.cuda.max_memory_allocated() / 1024**3
+    performance = benchmark_topology(criterion, outputs, targets, indices, features, variants) if gt_centerline else []
     write_json(
         output / f"batch{batch_index}.json",
         dict(
@@ -261,7 +325,8 @@ def probe_batch(
             forward_bitwise_equal=True,
             parameter_gradients=False,
             seconds=time.monotonic() - started,
-            peak_allocated_gib=torch.cuda.max_memory_allocated() / 1024**3,
+            peak_allocated_gib=probe_peak,
+            performance=performance,
         ),
     )
     print(f"{output.name}: batch={batch_index} shared-feature probes complete", flush=True)
@@ -273,6 +338,9 @@ def main() -> None:
     parser.add_argument("--previous", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--expected-commit", required=True)
+    parser.add_argument(
+        "--gt-centerline", action="store_true", help="Also compare GT-only coverage and loss performance"
+    )
     args = parser.parse_args()
     assert subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip() == args.expected_commit
     assert not subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=no"], text=True).strip()
@@ -294,6 +362,8 @@ def main() -> None:
             input_scale=504,
             mask_sampling_seeds=[420, 421, 422],
             cldice=dict(iterations=25, coefficient=0.1, chunk_size=4, class_ids=[1], betas=[1, 2]),
+            gt_centerline=args.gt_centerline,
+            benchmark=dict(warmup_per_variant=1, repeats=5, scope="loss forward and shared-feature backward"),
             baseline_cldice="counterfactual only; baseline was trained without clDice",
             limitations=(
                 "Post-hoc training diagnostic cohort, correlated groups; no DDP/AdamW replay; "
@@ -321,7 +391,7 @@ def main() -> None:
         dataset = data._dataset_train
         assert isinstance(dataset, CocoDetection)
         for start in range(0, len(cohort), 8):
-            probe_batch(module, dataset, cohort[start : start + 8], start // 8, output)
+            probe_batch(module, dataset, cohort[start : start + 8], start // 8, output, args.gt_centerline)
         assert hashlib.sha256(checkpoint.read_bytes()).hexdigest() == row["sha256"]
         del module, data
         gc.collect()

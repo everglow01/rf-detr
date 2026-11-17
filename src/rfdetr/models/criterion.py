@@ -27,7 +27,7 @@ from rfdetr.models.heads.segmentation import (
 )
 from rfdetr.models.matcher import HungarianMatcher
 from rfdetr.models.math import accuracy
-from rfdetr.models.soft_cldice import _soft_skeleton, soft_cldice_loss
+from rfdetr.models.soft_cldice import _soft_skeleton, gt_centerline_loss, soft_cldice_loss
 from rfdetr.utilities import box_ops
 from rfdetr.utilities.compiler import script_or_eager
 from rfdetr.utilities.distributed import get_world_size, is_dist_avail_and_initialized
@@ -549,6 +549,7 @@ class SetCriterion(nn.Module):
         query_point_class_ids: list[int] | None = None,
         mask_cldice_chunk_size: int = 0,
         mask_cldice_recall_beta: float = 1.0,
+        mask_cldice_mode: str = "cldice",
     ) -> None:
         """Create the criterion.
 
@@ -562,7 +563,8 @@ class SetCriterion(nn.Module):
             mask_cldice_class_ids: GT classes selected for the optional final-layer topology loss.
             mask_cldice_iterations: Number of additional soft-skeleton erosion steps.
             mask_cldice_chunk_size: Maximum matches per topology checkpoint; zero keeps whole-image computation.
-            mask_cldice_recall_beta: Centerline F-beta balance; greater than one favors GT skeleton coverage.
+            mask_cldice_recall_beta: Centerline F-beta balance, used only in cldice mode.
+            mask_cldice_mode: Select full clDice or the one-sided GT centerline coverage variant.
             query_point_class_ids: GT classes receiving one visible point coordinate loss per final match.
         """
         super().__init__()
@@ -590,7 +592,10 @@ class SetCriterion(nn.Module):
             raise ValueError("mask_cldice_chunk_size must be nonnegative")
         self.mask_cldice_chunk_size = mask_cldice_chunk_size
         self.mask_cldice_recall_beta = mask_cldice_recall_beta
-        if weight_dict.get("loss_mask_cldice", 0.0) > 0:
+        if mask_cldice_mode not in ("cldice", "gt_centerline"):
+            raise ValueError("mask_cldice_mode must be cldice or gt_centerline")
+        self.mask_cldice_mode = mask_cldice_mode
+        if weight_dict.get(self.mask_topology_loss_key, 0.0) > 0:
             if not self.mask_cldice_class_ids or any(
                 label < 0 or label >= num_classes for label in self.mask_cldice_class_ids
             ):
@@ -1038,6 +1043,11 @@ class SetCriterion(nn.Module):
         del src_masks
         return losses
 
+    @property
+    def mask_topology_loss_key(self) -> str:
+        """Keep the experimental variant identifiable in weighted loss logs."""
+        return "loss_mask_gt_centerline" if self.mask_cldice_mode == "gt_centerline" else "loss_mask_cldice"
+
     def _cldice_on_image(
         self, logits: Tensor, masks: Tensor, padding: Tensor, target_skeletons: Tensor, target_inverse: Tensor
     ) -> Tensor:
@@ -1058,6 +1068,8 @@ class SetCriterion(nn.Module):
             :, 0, :height, :width
         ]
         aligned = aligned.masked_fill(padding[:height, :width], -torch.inf)
+        if self.mask_cldice_mode == "gt_centerline":
+            return gt_centerline_loss(aligned, target_skeletons[target_inverse]).sum()
         return soft_cldice_loss(
             aligned,
             masks,
@@ -1113,9 +1125,10 @@ class SetCriterion(nn.Module):
         Each valid matched instance counts once, including Group DETR repeats. All ranks reduce the selected count,
         including ranks with no stems. The global count is clamped BEFORE division by world size so a single stem across
         two ranks still receives its full gradient after DDP averages the rank gradients. GT skeletons are computed once
-        per unique nonempty target outside checkpointing. Prediction skeleton activations are recomputed during backward
-        to bound their storage at full mask resolution. No randomness is used, and all original losses have already run
-        before this method is called.
+        per unique nonempty target outside checkpointing. Only cldice mode builds prediction skeletons; gt_centerline
+        uses their one-sided coverage instead. Prediction activations are recomputed during backward to bound their
+        storage at full mask resolution. No randomness is used, and all original losses have already run before this
+        method is called.
         """
         padding = outputs.get("mask_padding")
         if padding is None:
@@ -1189,7 +1202,7 @@ class SetCriterion(nn.Module):
         if is_dist_avail_and_initialized():
             torch.distributed.all_reduce(count)
         denominator = count.clamp(min=1) / get_world_size()
-        return {"loss_mask_cldice": numerator / denominator}
+        return {self.mask_topology_loss_key: numerator / denominator}
 
     def loss_keypoints(
         self,
@@ -1514,7 +1527,7 @@ class SetCriterion(nn.Module):
         """
         if "loss_query_point" in self.weight_dict and num_boxes is not None:
             raise ValueError("query-point loss has a separate count normalizer; num_boxes overrides are unsupported")
-        if self.weight_dict.get("loss_mask_cldice", 0.0) > 0 and num_boxes is not None:
+        if self.weight_dict.get(self.mask_topology_loss_key, 0.0) > 0 and num_boxes is not None:
             raise ValueError("soft-clDice has a separate stem-count normalizer; num_boxes overrides are unsupported")
         group_detr = self.group_detr if self.training else 1
         outputs_without_aux = {k: v for k, v in outputs.items() if k != "aux_outputs"}
@@ -1615,7 +1628,7 @@ class SetCriterion(nn.Module):
                 layer_losses = self.get_loss(loss, layer_outputs, targets, indices, num_boxes, **kwargs)
                 losses.update({key + suffix: value for key, value in layer_losses.items()})
 
-        if self.weight_dict.get("loss_mask_cldice", 0.0) > 0:
+        if self.weight_dict.get(self.mask_topology_loss_key, 0.0) > 0:
             losses.update(self.loss_mask_cldice(outputs_without_aux, targets, all_indices[0]))
         if "loss_query_point" in self.weight_dict:
             losses.update(self.loss_query_point(outputs_without_aux, targets, all_indices[0]))
