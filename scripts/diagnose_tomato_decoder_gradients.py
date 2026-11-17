@@ -19,6 +19,7 @@ import json
 import math
 import subprocess
 import time
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,7 @@ from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.training.module_model import RFDETRModelModule
 from rfdetr.utilities.tensors import make_collate_fn
 from scripts.diagnose_tomato_e1 import configurations, seed_sample, write_json
+from scripts.diagnose_tomato_mask_conflicts import attribute_mask_gradients, capture_mask_points, dense_geometry
 from scripts.diagnose_tomato_supervision import mask_overlaps
 
 
@@ -177,6 +179,7 @@ def probe_batch(
     batch_index: int,
     output: Path,
     gt_centerline: bool = False,
+    split_mask: bool = False,
 ) -> None:
     """Hold matching and forward features fixed across all loss probes and both beta choices."""
     started = time.monotonic()
@@ -228,13 +231,33 @@ def probe_batch(
     grads = {"cls": feature_gradient(cls_loss, features)}
     logit_jacobian = feature_gradient(outputs["pred_logits"][..., 1].sum(), features)
     losses = dict(cls=float(cls_loss.detach()))
+    attribution = []
     for seed in (420, 421, 422):
         torch.manual_seed(seed + batch_index * 1000)
-        with torch.autocast("cuda", dtype=torch.bfloat16):
+        with (
+            capture_mask_points() if split_mask else nullcontext() as captured_points,
+            torch.autocast("cuda", dtype=torch.bfloat16),
+        ):
             mask_losses = criterion.loss_masks(outputs, targets, indices, normalizer)
             loss = torch.stack([value * criterion.weight_dict[key] for key, value in mask_losses.items()]).sum()
         grads[f"mask_{seed}"] = feature_gradient(loss, features)
         losses[f"mask_{seed}"] = float(loss.detach())
+        if split_mask:
+            assert captured_points is not None
+            attribution.append(
+                attribute_mask_gradients(
+                    mask_losses,
+                    captured_points,
+                    criterion,
+                    features,
+                    targets,
+                    indices,
+                    cases,
+                    samples.mask,
+                    seed,
+                    grads,
+                )
+            )
     variants: list[tuple[str, str, float | None]] = [("cldice_1", "cldice", 1.0), ("cldice_2", "cldice", 2.0)]
     if gt_centerline:
         variants.append(("gt_centerline", "gt_centerline", None))
@@ -308,8 +331,16 @@ def probe_batch(
                         metrics=measures(cls[b, q], mask[b, q], topology[b, q], logit_jacobian[b, q]),
                     )
                 )
+    geometry: list[dict[str, Any]] = []
+    if split_mask:
+        geometry, crops = dense_geometry(outputs, targets, indices, cases, samples.mask, samples.tensors)
+        np.savez_compressed(output / f"batch{batch_index}-crops.npz", **crops)
     probe_peak = torch.cuda.max_memory_allocated() / 1024**3
-    performance = benchmark_topology(criterion, outputs, targets, indices, features, variants) if gt_centerline else []
+    performance = (
+        benchmark_topology(criterion, outputs, targets, indices, features, variants)
+        if gt_centerline and not split_mask
+        else []
+    )
     write_json(
         output / f"batch{batch_index}.json",
         dict(
@@ -327,6 +358,8 @@ def probe_batch(
             seconds=time.monotonic() - started,
             peak_allocated_gib=probe_peak,
             performance=performance,
+            attribution=attribution,
+            geometry=geometry,
         ),
     )
     print(f"{output.name}: batch={batch_index} shared-feature probes complete", flush=True)
@@ -341,7 +374,10 @@ def main() -> None:
     parser.add_argument(
         "--gt-centerline", action="store_true", help="Also compare GT-only coverage and loss performance"
     )
+    parser.add_argument("--split-mask", action="store_true", help="Attribute native CE/Dice gradients by point region")
     args = parser.parse_args()
+    if args.split_mask:
+        args.gt_centerline = True
     assert subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip() == args.expected_commit
     assert not subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=no"], text=True).strip()
     assert json.loads((args.previous / "completed.json").read_text())["complete"]
@@ -363,7 +399,13 @@ def main() -> None:
             mask_sampling_seeds=[420, 421, 422],
             cldice=dict(iterations=25, coefficient=0.1, chunk_size=4, class_ids=[1], betas=[1, 2]),
             gt_centerline=args.gt_centerline,
-            benchmark=dict(warmup_per_variant=1, repeats=5, scope="loss forward and shared-feature backward"),
+            split_mask=args.split_mask,
+            benchmark=dict(
+                enabled=args.gt_centerline and not args.split_mask,
+                warmup_per_variant=1,
+                repeats=5,
+                scope="loss forward and shared-feature backward",
+            ),
             baseline_cldice="counterfactual only; baseline was trained without clDice",
             limitations=(
                 "Post-hoc training diagnostic cohort, correlated groups; no DDP/AdamW replay; "
@@ -391,7 +433,9 @@ def main() -> None:
         dataset = data._dataset_train
         assert isinstance(dataset, CocoDetection)
         for start in range(0, len(cohort), 8):
-            probe_batch(module, dataset, cohort[start : start + 8], start // 8, output, args.gt_centerline)
+            probe_batch(
+                module, dataset, cohort[start : start + 8], start // 8, output, args.gt_centerline, args.split_mask
+            )
         assert hashlib.sha256(checkpoint.read_bytes()).hexdigest() == row["sha256"]
         del module, data
         gc.collect()
