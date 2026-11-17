@@ -48,9 +48,12 @@ def test_capture_keeps_native_matching_rng_and_group_boundaries() -> None:
     expected = matcher(outputs, [target], group_detr=2)
     expected_rng = torch.random.get_rng_state()
     torch.manual_seed(42)
-    actual, total, classes = capture_match(matcher, outputs, target, 2)
+    actual, total, classes, audit = capture_match(matcher, outputs, target, 2)
     assert torch.equal(torch.random.get_rng_state(), expected_rng)
     for left, right in zip(expected[0], actual[0], strict=True):
         assert torch.equal(left, right)
     assert total.shape == classes.shape == (8, 2)
+    assert audit["points"] == 16
+    assert len(audit["foreground_points"]) == 2
+    assert all(0 <= count <= 16 for count in audit["foreground_points"])
     assert sorted(actual[0][0].div(4, rounding_mode="floor").tolist()) == [0, 0, 1, 1]

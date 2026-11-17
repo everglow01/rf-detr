@@ -27,6 +27,8 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 
 from rfdetr.datasets.coco import CocoDetection
+from rfdetr.models import matcher as matcher_module
+from rfdetr.models.heads.segmentation import point_sample
 from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.training.module_model import RFDETRModelModule
 from rfdetr.utilities.box_ops import box_cxcywh_to_xyxy, box_iou, elementwise_box_iou
@@ -82,22 +84,34 @@ def supervision(
 
 def capture_match(
     matcher: Any, outputs: dict[str, Any], target: dict[str, Tensor], groups: int
-) -> tuple[Any, Tensor, Tensor]:
+) -> tuple[Any, Tensor, Tensor, dict[str, Any]]:
     """Capture the exact native solver input without drawing a second random mask sample."""
     captured = []
+    audit: dict[str, Any] = {}
     assign = matcher._assign_compact_cost_matrix
+
+    def capture_points(*args: Any, **kwargs: Any) -> Tensor:
+        sampled = point_sample(*args, **kwargs)
+        if kwargs.get("mode") == "nearest":
+            audit["foreground_points"] = (sampled > 0).flatten(1).sum(1).cpu().tolist()
+            audit["points"] = sampled.shape[-1]
+        return sampled
 
     def capture(cost: Tensor, sizes: list[int], group_detr: int) -> Any:
         captured.append(cost.detach().clone())
         return assign(cost, sizes, group_detr)
 
-    with patch.object(matcher, "_assign_compact_cost_matrix", side_effect=capture):
+    with (
+        patch.object(matcher, "_assign_compact_cost_matrix", side_effect=capture),
+        patch.object(matcher_module, "point_sample", side_effect=capture_points),
+    ):
         indices = matcher(outputs, [target], group_detr=groups)
     assert len(captured) == 1, "This diagnostic requires the batch-one native solver path"
     classification = matcher.cost_class * matcher._focal_classification_cost(
         outputs["pred_logits"][0, :, target["labels"]]
     )
-    return indices, captured[0], classification.detach().float().cpu()
+    assert "foreground_points" in audit
+    return indices, captured[0], classification.detach().float().cpu(), audit
 
 
 @torch.no_grad()
@@ -142,7 +156,7 @@ def records_for_image(
 ) -> list[dict[str, Any]]:
     """Distinguish orphan low-score candidates from ordinary suppressed duplicates, separately in every group."""
     with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
-        indices, total_cost, class_cost = capture_match(criterion.matcher, outputs, target, groups)
+        indices, total_cost, class_cost, audit = capture_match(criterion.matcher, outputs, target, groups)
     state = {
         k: v.cpu()
         for k, v in supervision(criterion, outputs, target, indices, gradient_probe=meta["split"] == "train").items()
@@ -185,6 +199,8 @@ def records_for_image(
                 dict(
                     **meta,
                     target_index=ti,
+                    matching_points=audit["points"],
+                    gt_foreground_points=audit["foreground_points"][ti],
                     gt_mask_pixels=int(target["masks"][ti].sum()),
                     group=group,
                     fit_candidates=len(fit),
@@ -223,7 +239,7 @@ def run_arm(args: argparse.Namespace, arm: str, checkpoint: Path, config: Path) 
             outputs["pred_logits"][0].sigmoid().float().cpu(), torch.tensor(prior["query_scores"]), rtol=0, atol=0
         )
         assert torch.where(target["labels"] == 1)[0].tolist() == prior["target_indices"]
-        for seed in (42, 43, 44):
+        for seed in args.validation_seeds:
             torch.manual_seed(seed * 1000000 + image_id)
             validation.extend(
                 records_for_image(
@@ -237,6 +253,12 @@ def run_arm(args: argparse.Namespace, arm: str, checkpoint: Path, config: Path) 
             )
     write_json(args.output / f"{arm}-validation.json", validation)
     print(f"{arm}: validation snapshots={len(validation)}", flush=True)
+    if args.skip_training:
+        assert all(p.grad is None for p in module.parameters())
+        del module, data
+        gc.collect()
+        torch.cuda.empty_cache()
+        return
     dataset = data._dataset_train
     assert isinstance(dataset, CocoDetection) and dataset.cat2label is not None
     stem_categories = [key for key, label in dataset.cat2label.items() if label == 1]
@@ -298,6 +320,8 @@ def main() -> None:
     parser.add_argument("--previous", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--expected-commit", required=True)
+    parser.add_argument("--validation-seeds", nargs="+", type=int, default=[42, 43, 44])
+    parser.add_argument("--skip-training", action="store_true")
     args = parser.parse_args()
     assert subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip() == args.expected_commit
     assert not subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=no"], text=True).strip()
@@ -315,9 +339,9 @@ def main() -> None:
             network_backward=False,
             batch_size=1,
             train_groups="native",
-            training_images=128,
+            training_images=0 if args.skip_training else 128,
             augmentation_seeds=[42, 43],
-            validation_matching_seeds=[42, 43, 44],
+            validation_matching_seeds=args.validation_seeds,
             loss="native final-layer IA-BCE only",
             limitations=(
                 "Frozen EMA snapshots, not historical assignments; batch-one native augmentation, "
