@@ -1904,7 +1904,7 @@ class SegmentationTrainConfig(TrainConfig):
         mask_cldice_iterations: Soft-skeleton erosion iterations after the initial layer.
         mask_cldice_chunk_size: Matches per topology checkpoint; zero processes the whole image.
         mask_cldice_recall_beta: Centerline F-beta balance, used only in cldice mode.
-        mask_cldice_mode: cldice preserves the original loss; gt_centerline uses only GT skeleton coverage.
+        mask_cldice_mode: Select cldice, GT-only coverage, or region precision with GT coverage.
         cls_loss_coef: Classification loss weight. Defaults to ``1.0`` to match the
             effective pre-v1.7 value (the v1.7 TrainConfig ownership migration
             silently activated a dormant ``5.0``; this field restores the correct
@@ -1921,7 +1921,7 @@ class SegmentationTrainConfig(TrainConfig):
     mask_cldice_iterations: int = Field(default=10, ge=0)
     mask_cldice_chunk_size: int = Field(default=0, ge=0)
     mask_cldice_recall_beta: float = Field(default=1.0, gt=0, allow_inf_nan=False)
-    mask_cldice_mode: Literal["cldice", "gt_centerline"] = "cldice"
+    mask_cldice_mode: Literal["cldice", "gt_centerline", "region_centerline"] = "cldice"
     cls_loss_coef: float = 1.0
 
     @model_validator(mode="after")

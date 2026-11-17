@@ -180,6 +180,7 @@ def probe_batch(
     output: Path,
     gt_centerline: bool = False,
     split_mask: bool = False,
+    region_centerline: bool = False,
 ) -> None:
     """Hold matching and forward features fixed across all loss probes and both beta choices."""
     started = time.monotonic()
@@ -261,6 +262,8 @@ def probe_batch(
     variants: list[tuple[str, str, float | None]] = [("cldice_1", "cldice", 1.0), ("cldice_2", "cldice", 2.0)]
     if gt_centerline:
         variants.append(("gt_centerline", "gt_centerline", None))
+    if region_centerline:
+        variants.append(("region_centerline", "region_centerline", None))
     for name, mode, beta in variants:
         criterion.mask_cldice_mode = mode
         criterion.mask_cldice_recall_beta = beta or 1.0
@@ -338,7 +341,7 @@ def probe_batch(
     probe_peak = torch.cuda.max_memory_allocated() / 1024**3
     performance = (
         benchmark_topology(criterion, outputs, targets, indices, features, variants)
-        if gt_centerline and not split_mask
+        if gt_centerline and (not split_mask or region_centerline)
         else []
     )
     write_json(
@@ -375,8 +378,9 @@ def main() -> None:
         "--gt-centerline", action="store_true", help="Also compare GT-only coverage and loss performance"
     )
     parser.add_argument("--split-mask", action="store_true", help="Attribute native CE/Dice gradients by point region")
+    parser.add_argument("--region-centerline", action="store_true", help="Include region precision with GT coverage")
     args = parser.parse_args()
-    if args.split_mask:
+    if args.split_mask or args.region_centerline:
         args.gt_centerline = True
     assert subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip() == args.expected_commit
     assert not subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=no"], text=True).strip()
@@ -400,8 +404,9 @@ def main() -> None:
             cldice=dict(iterations=25, coefficient=0.1, chunk_size=4, class_ids=[1], betas=[1, 2]),
             gt_centerline=args.gt_centerline,
             split_mask=args.split_mask,
+            region_centerline=args.region_centerline,
             benchmark=dict(
-                enabled=args.gt_centerline and not args.split_mask,
+                enabled=args.gt_centerline and (not args.split_mask or args.region_centerline),
                 warmup_per_variant=1,
                 repeats=5,
                 scope="loss forward and shared-feature backward",
@@ -434,7 +439,14 @@ def main() -> None:
         assert isinstance(dataset, CocoDetection)
         for start in range(0, len(cohort), 8):
             probe_batch(
-                module, dataset, cohort[start : start + 8], start // 8, output, args.gt_centerline, args.split_mask
+                module,
+                dataset,
+                cohort[start : start + 8],
+                start // 8,
+                output,
+                args.gt_centerline,
+                args.split_mask,
+                args.region_centerline,
             )
         assert hashlib.sha256(checkpoint.read_bytes()).hexdigest() == row["sha256"]
         del module, data

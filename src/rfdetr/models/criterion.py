@@ -27,7 +27,7 @@ from rfdetr.models.heads.segmentation import (
 )
 from rfdetr.models.matcher import HungarianMatcher
 from rfdetr.models.math import accuracy
-from rfdetr.models.soft_cldice import _soft_skeleton, gt_centerline_loss, soft_cldice_loss
+from rfdetr.models.soft_cldice import _soft_skeleton, gt_centerline_loss, region_centerline_loss, soft_cldice_loss
 from rfdetr.utilities import box_ops
 from rfdetr.utilities.compiler import script_or_eager
 from rfdetr.utilities.distributed import get_world_size, is_dist_avail_and_initialized
@@ -564,7 +564,7 @@ class SetCriterion(nn.Module):
             mask_cldice_iterations: Number of additional soft-skeleton erosion steps.
             mask_cldice_chunk_size: Maximum matches per topology checkpoint; zero keeps whole-image computation.
             mask_cldice_recall_beta: Centerline F-beta balance, used only in cldice mode.
-            mask_cldice_mode: Select full clDice or the one-sided GT centerline coverage variant.
+            mask_cldice_mode: Select full clDice, GT coverage, or region precision with GT coverage.
             query_point_class_ids: GT classes receiving one visible point coordinate loss per final match.
         """
         super().__init__()
@@ -592,8 +592,8 @@ class SetCriterion(nn.Module):
             raise ValueError("mask_cldice_chunk_size must be nonnegative")
         self.mask_cldice_chunk_size = mask_cldice_chunk_size
         self.mask_cldice_recall_beta = mask_cldice_recall_beta
-        if mask_cldice_mode not in ("cldice", "gt_centerline"):
-            raise ValueError("mask_cldice_mode must be cldice or gt_centerline")
+        if mask_cldice_mode not in ("cldice", "gt_centerline", "region_centerline"):
+            raise ValueError("mask_cldice_mode must be cldice, gt_centerline or region_centerline")
         self.mask_cldice_mode = mask_cldice_mode
         if weight_dict.get(self.mask_topology_loss_key, 0.0) > 0:
             if not self.mask_cldice_class_ids or any(
@@ -1046,7 +1046,7 @@ class SetCriterion(nn.Module):
     @property
     def mask_topology_loss_key(self) -> str:
         """Keep the experimental variant identifiable in weighted loss logs."""
-        return "loss_mask_gt_centerline" if self.mask_cldice_mode == "gt_centerline" else "loss_mask_cldice"
+        return f"loss_mask_{self.mask_cldice_mode}"
 
     def _cldice_on_image(
         self, logits: Tensor, masks: Tensor, padding: Tensor, target_skeletons: Tensor, target_inverse: Tensor
@@ -1068,6 +1068,8 @@ class SetCriterion(nn.Module):
             :, 0, :height, :width
         ]
         aligned = aligned.masked_fill(padding[:height, :width], -torch.inf)
+        if self.mask_cldice_mode == "region_centerline":
+            return region_centerline_loss(aligned, masks, target_skeletons[target_inverse]).sum()
         if self.mask_cldice_mode == "gt_centerline":
             return gt_centerline_loss(aligned, target_skeletons[target_inverse]).sum()
         return soft_cldice_loss(
