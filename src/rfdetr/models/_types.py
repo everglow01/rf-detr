@@ -107,6 +107,9 @@ class BuilderArgs(Protocol):
     mask_ce_loss_coef: float
     mask_dice_loss_coef: float
     mask_point_sample_ratio: int
+    mask_quality_loss_coef: float
+    mask_quality_class_ids: list[int]
+    mask_quality_chunk_size: int
     mask_cldice_loss_coef: float
     mask_cldice_class_ids: list[int]
     mask_cldice_iterations: int

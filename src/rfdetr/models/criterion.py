@@ -559,6 +559,8 @@ class SetCriterion(nn.Module):
         mask_region_precision_weight: float = 1.0,
         mask_region_margin: int = 0,
         mask_centerline_ce_radius: int = 3,
+        mask_quality_class_ids: list[int] | None = None,
+        mask_quality_chunk_size: int = 16,
     ) -> None:
         """Create the criterion.
 
@@ -576,6 +578,8 @@ class SetCriterion(nn.Module):
             mask_cldice_mode: Select full clDice, GT coverage, or region precision with GT coverage.
             mask_region_precision_weight: Relative precision weight in region_centerline, in [0, 1].
             mask_region_margin: Exterior precision ignore-band radius on the original GT grid.
+            mask_quality_class_ids: Matched classes receiving detached mask-IoU targets.
+            mask_quality_chunk_size: Max masks per IoU calculation.
             mask_centerline_ce_radius: Exterior negative-band radius for local centerline CE.
             query_point_class_ids: GT classes receiving one visible point coordinate loss per final match.
         """
@@ -598,6 +602,11 @@ class SetCriterion(nn.Module):
                 raise ValueError("query_point_head requires valid query_point_class_ids")
             if sum_group_losses:
                 raise ValueError("query_point_head requires sum_group_losses=False (group averaging)")
+        self.mask_quality_class_ids = tuple(mask_quality_class_ids or [])
+        self.mask_quality_chunk_size = mask_quality_chunk_size
+        if "loss_mask_quality" in weight_dict:
+            if not self.mask_quality_class_ids or mask_quality_chunk_size < 1 or sum_group_losses:
+                raise ValueError("mask quality requires selected classes, a positive chunk size and group averaging")
         self.mask_cldice_class_ids = tuple(mask_cldice_class_ids or [])
         self.mask_cldice_iterations = mask_cldice_iterations
         if mask_cldice_chunk_size < 0:
@@ -1122,6 +1131,67 @@ class SetCriterion(nn.Module):
             recall_beta=self.mask_cldice_recall_beta,
         ).sum()
 
+    @torch.no_grad()
+    def _matched_mask_quality(
+        self, outputs: dict[str, Any], image: int, target: dict[str, Tensor], indices: tuple[Tensor, Tensor]
+    ) -> tuple[Tensor, Tensor, Tensor]:
+        """Return selected query indices, GT indices and detached hard-mask IoUs on the unpadded GT grid."""
+        labels = target["labels"]
+        source, truth = (index.to(labels.device) for index in indices)
+        selected = torch.isin(labels[truth], labels.new_tensor(self.mask_quality_class_ids))
+        if "valid" in target:
+            selected &= target["valid"][truth]
+        source, truth = source[selected], truth[selected]
+        if not source.numel():
+            return source, truth, source.new_empty(0, dtype=torch.float32)
+        padding = outputs["mask_padding"][image]
+        height, width = target["masks"].shape[-2:]
+        if height > padding.shape[0] or width > padding.shape[1]:
+            raise ValueError("mask quality GT masks exceed the input canvas")
+        valid = ~padding[:height, :width]
+        pred_masks = outputs["pred_masks"]
+        qualities, nonempty = [], []
+        for start in range(0, source.numel(), self.mask_quality_chunk_size):
+            chunk = slice(start, start + self.mask_quality_chunk_size)
+            queries, gt_indices = source[chunk], truth[chunk]
+            if isinstance(pred_masks, Tensor):
+                logits = pred_masks[image, queries]
+            else:
+                logits = (
+                    torch.einsum(
+                        "chw,nc->nhw",
+                        pred_masks["spatial_features"][image],
+                        pred_masks["query_features"][image, queries],
+                    )
+                    + pred_masks["bias"]
+                )
+            aligned = F.interpolate(logits[:, None].float(), padding.shape, mode="bilinear", align_corners=False)
+            predicted = (aligned[:, 0, :height, :width] > 0) & valid
+            mask = target["masks"][gt_indices].bool() & valid
+            nonempty.append(mask.any(dim=(1, 2)))
+            intersection = (predicted & mask).sum((1, 2))
+            union = (predicted | mask).sum((1, 2))
+            qualities.append(intersection.float() / union.clamp_min(1))
+        keep = torch.cat(nonempty)
+        return source[keep], truth[keep], torch.cat(qualities)[keep]
+
+    def loss_mask_quality(
+        self, outputs: dict[str, Any], targets: list[dict[str, Tensor]], indices: list[tuple[Tensor, Tensor]]
+    ) -> dict[str, Tensor]:
+        """Supervise existing classification logits with detached mask IoU, averaged over all valid group matches."""
+        logits = outputs["pred_logits"]
+        numerator = logits[..., :0].sum(dtype=torch.float32)
+        count = 0
+        for image, (target, matches) in enumerate(zip(targets, indices, strict=True)):
+            source, truth, quality = self._matched_mask_quality(outputs, image, target, matches)
+            class_logits = logits[image, source, target["labels"][truth]].float()
+            numerator = numerator + F.binary_cross_entropy_with_logits(class_logits, quality, reduction="sum")
+            count += source.numel()
+        total = numerator.new_tensor(count)
+        if is_dist_avail_and_initialized():
+            torch.distributed.all_reduce(total)
+        return {"loss_mask_quality": numerator / (total.clamp_min(1) / get_world_size())}
+
     def loss_query_point(
         self,
         outputs: dict[str, Any],
@@ -1569,6 +1639,8 @@ class SetCriterion(nn.Module):
             >>> criterion.forward(outputs, targets, num_boxes=1.0)
             {}
         """
+        if "loss_mask_quality" in self.weight_dict and num_boxes is not None:
+            raise ValueError("mask quality has a separate matched-instance normalizer")
         if "loss_query_point" in self.weight_dict and num_boxes is not None:
             raise ValueError("query-point loss has a separate count normalizer; num_boxes overrides are unsupported")
         if self.weight_dict.get(self.mask_topology_loss_key, 0.0) > 0 and num_boxes is not None:
@@ -1672,6 +1744,8 @@ class SetCriterion(nn.Module):
                 layer_losses = self.get_loss(loss, layer_outputs, targets, indices, num_boxes, **kwargs)
                 losses.update({key + suffix: value for key, value in layer_losses.items()})
 
+        if "loss_mask_quality" in self.weight_dict:
+            losses.update(self.loss_mask_quality(outputs_without_aux, targets, all_indices[0]))
         if self.weight_dict.get(self.mask_topology_loss_key, 0.0) > 0:
             losses.update(self.loss_mask_cldice(outputs_without_aux, targets, all_indices[0]))
         if "loss_query_point" in self.weight_dict:

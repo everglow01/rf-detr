@@ -147,7 +147,7 @@ class LWDETR(nn.Module):
             aux_loss: True if auxiliary decoding losses (loss at each decoder layer) are to be used.
             group_detr: Number of groups to speed detr training. Default is 1.
             lite_refpoint_refine: TODO
-            mask_cldice_enabled: Include input padding in training loss outputs for soft-clDice.
+            mask_cldice_enabled: Include input padding for class-selective mask losses.
             query_point_head: Attach a coordinate-only MLP to final decoder queries, independently of GroupPose.
         """
         super().__init__()
@@ -949,7 +949,8 @@ def build_model(args: "BuilderArgs") -> LWDETR | tuple[Any, None, None]:
         use_grouppose_keypoints=getattr(args, "use_grouppose_keypoints", False),
         num_keypoints_per_class=getattr(args, "num_keypoints_per_class", []),
         grouppose_keypoint_dim_downscale=getattr(args, "grouppose_keypoint_dim_downscale", 1),
-        mask_cldice_enabled=getattr(args, "mask_cldice_loss_coef", 0.0) > 0,
+        mask_cldice_enabled=getattr(args, "mask_cldice_loss_coef", 0.0) > 0
+        or getattr(args, "mask_quality_loss_coef", 0.0) > 0,
         query_point_head=getattr(args, "query_point_head", False),
     )
     return model
@@ -985,6 +986,15 @@ def build_criterion_and_postprocessors(args: "BuilderArgs") -> tuple[SetCriterio
         # Keep the original matcher and all auxiliary/encoder weights unchanged.
         weight_dict["loss_query_point"] = getattr(args, "query_point_loss_coef", 1.0)
 
+    quality_coef = getattr(args, "mask_quality_loss_coef", 0.0)
+    if quality_coef > 0:
+        if not args.segmentation_head or has_keypoints or not args.ia_bce_loss:
+            raise ValueError("mask quality requires segmentation with IA-BCE and without GroupPose")
+        classes = getattr(args, "mask_quality_class_ids", [])
+        if not classes or any(label < 0 or label >= args.num_classes for label in classes):
+            raise ValueError("mask_quality_class_ids must select existing dataset classes")
+        weight_dict["loss_mask_quality"] = quality_coef
+
     cldice_coef = getattr(args, "mask_cldice_loss_coef", 0.0)
     if cldice_coef > 0:
         if not args.segmentation_head or has_keypoints:
@@ -1016,6 +1026,8 @@ def build_criterion_and_postprocessors(args: "BuilderArgs") -> tuple[SetCriterio
             use_position_supervised_loss=args.use_position_supervised_loss,
             ia_bce_loss=args.ia_bce_loss,
             mask_point_sample_ratio=args.mask_point_sample_ratio,
+            mask_quality_class_ids=getattr(args, "mask_quality_class_ids", []),
+            mask_quality_chunk_size=getattr(args, "mask_quality_chunk_size", 16),
             mask_cldice_class_ids=getattr(args, "mask_cldice_class_ids", []),
             mask_cldice_iterations=getattr(args, "mask_cldice_iterations", 10),
             mask_cldice_chunk_size=getattr(args, "mask_cldice_chunk_size", 0),

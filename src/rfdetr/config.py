@@ -1894,6 +1894,9 @@ class SegmentationTrainConfig(TrainConfig):
     Extends :class:`TrainConfig` with segmentation-specific loss coefficients.
 
     Attributes:
+        mask_quality_loss_coef: Weight of final matched mask-IoU classification supervision.
+        mask_quality_class_ids: Dataset classes receiving mask-IoU quality targets.
+        mask_quality_chunk_size: Maximum number of matched masks decoded at once.
         mask_point_sample_ratio: Number of points sampled per mask for point-based
             mask loss computation.
         mask_ce_loss_coef: Cross-entropy loss weight for mask prediction.
@@ -1919,6 +1922,9 @@ class SegmentationTrainConfig(TrainConfig):
     mask_ce_loss_coef: float = 5.0
     mask_dice_loss_coef: float = 5.0
     query_point_loss_coef: float = Field(default=1.0, ge=0, allow_inf_nan=False)
+    mask_quality_loss_coef: float = Field(default=0.0, ge=0, allow_inf_nan=False)
+    mask_quality_class_ids: list[int] = Field(default_factory=list)
+    mask_quality_chunk_size: int = Field(default=16, ge=1)
     mask_cldice_loss_coef: float = Field(default=0.0, ge=0, allow_inf_nan=False)
     mask_cldice_class_ids: list[int] = Field(default_factory=list)
     mask_cldice_iterations: int = Field(default=10, ge=0)
@@ -1931,6 +1937,17 @@ class SegmentationTrainConfig(TrainConfig):
     mask_region_margin: int = Field(default=0, ge=0)
     mask_centerline_ce_radius: int = Field(default=3, ge=1)
     cls_loss_coef: float = 1.0
+
+    @model_validator(mode="after")
+    def validate_mask_quality(self) -> "SegmentationTrainConfig":
+        """Check class selection and normalization for matched mask-IoU supervision."""
+        if self.mask_quality_loss_coef > 0:
+            classes = self.mask_quality_class_ids
+            if not classes or len(set(classes)) != len(classes) or min(classes) < 0:
+                raise ValueError("mask quality requires explicit, unique, nonnegative mask_quality_class_ids")
+            if self.grad_accum_steps != 1:
+                raise ValueError("mask quality uses a per-batch match count and requires grad_accum_steps=1")
+        return self
 
     @model_validator(mode="after")
     def validate_cldice_classes(self) -> "SegmentationTrainConfig":

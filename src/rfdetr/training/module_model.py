@@ -854,7 +854,7 @@ class RFDETRModelModule(LightningModule):
         self._cldice_target_padding = None
         if tc.multi_scale is MultiScale.PER_BATCH:
             samples, _ = batch
-            if getattr(tc, "mask_cldice_loss_coef", 0.0) > 0:
+            if getattr(tc, "mask_cldice_loss_coef", 0.0) > 0 or getattr(tc, "mask_quality_loss_coef", 0.0) > 0:
                 # Per-batch resizing changes inputs, while GT masks retain their original canvas.
                 self._cldice_target_padding = samples.mask
             scales = compute_multi_scale_scales(mc.resolution, tc.expanded_scales, mc.patch_size, mc.num_windows)

@@ -356,6 +356,8 @@ result = subprocess.run(
 
 ### Tomato experiment development
 
+- Optional mask quality supervision pairs existing final-layer class logits with detached hard mask IoU on the unpadded GT canvas. Enable it only for the selected dataset classes with a positive coefficient. Keep the native matcher and mask losses, count all valid Group DETR matches across ranks, and preserve the pre-resize GT padding when quality supervision is active.
+
 - Optional `centerline_ce` / `centerline_local_ce` reuse final stem matching and the topology adapter. They average positive GT-skeleton CE and, for the latter, negative CE in a valid exterior GT band separately; native losses stay unchanged. No prediction skeleton or detach on predictions. The outer coefficient remains zero by default.
 
 - Develop only in the user-designated `rfdetr26` checkout on `codex/tomato-topology-keypoints`. Do not treat conversation-workspace copies as development branches. Review changes with the user; do not commit or push without their explicit instruction. New server code comes from GitHub via `git pull --ff-only`, not uploaded uncommitted source bundles. Preserve already-running experiment snapshots as historical evidence. See `docs/tomato_git_workflow.md`.
