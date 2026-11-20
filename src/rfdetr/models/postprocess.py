@@ -13,6 +13,7 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import nn
 
+from rfdetr.models.heads.local_candidates import rank_candidates
 from rfdetr.utilities import box_ops
 
 # Number of masks upsampled per interpolation call. Bounds peak memory when many masks are
@@ -117,6 +118,13 @@ class PostProcess(nn.Module):
                     for class_id in self.query_point_class_ids:
                         valid |= result["labels"] == class_id
                     result["pick_point_valid"] = valid
+                    if "candidate_query" in outputs and valid.any():
+                        xy, _, logits = rank_candidates(outputs, i, topk_boxes[i, keep][valid])
+                        best = logits.argmax(dim=-1)
+                        chosen = xy[torch.arange(len(best), device=best.device), best]
+                        refined = result["pick_points"].float()
+                        refined[valid] = chosen * target_sizes[i].flip(0)
+                        result["pick_points"] = refined
             return results
         if out_keypoints is not None:
             return self._postprocess_keypoints(out_keypoints, scores, labels, boxes, topk_boxes, target_sizes)

@@ -20,6 +20,7 @@ from torch import Tensor, nn
 from torch.utils.checkpoint import checkpoint
 
 from rfdetr.models.heads.keypoints import compute_l1_keypoint_loss
+from rfdetr.models.heads.local_candidates import candidate_loss, rank_candidates
 from rfdetr.models.heads.segmentation import (
     calculate_uncertainty,
     get_uncertain_point_coords_with_randomness,
@@ -1206,6 +1207,11 @@ class SetCriterion(nn.Module):
         """
         predictions = outputs["pred_pick_points"]
         numerator = predictions[..., :0].sum().float()
+        ranking = "loss_query_point_candidate" in self.weight_dict
+        if ranking:
+            rank_sum = (
+                outputs["candidate_query"][..., :0].sum().float() + outputs["candidate_spatial"][:, :0].sum().float()
+            )
         count = predictions.new_zeros((), dtype=torch.float32)
         for batch_index, (target, (source_indices, target_indices)) in enumerate(zip(targets, indices, strict=True)):
             if "keypoints" not in target or target["keypoints"].shape[1:] != (1, 3):
@@ -1222,11 +1228,18 @@ class SetCriterion(nn.Module):
                 selected &= target["valid"][target_indices]
             pred = predictions[batch_index, source_indices[selected]].float()
             truth = points[selected, :2].float()
+            if ranking and pred.shape[0]:
+                xy, valid, scores = rank_candidates(outputs, batch_index, source_indices[selected])
+                rank_sum = rank_sum + candidate_loss(xy, valid, scores, truth, target["size"])
             numerator = numerator + F.l1_loss(pred, truth, reduction="none").mean(-1).sum()
             count = count + selected.sum()
         if is_dist_avail_and_initialized():
             torch.distributed.all_reduce(count)
-        return {"loss_query_point": numerator / (count.clamp(min=1) / get_world_size())}
+        denominator = count.clamp(min=1) / get_world_size()
+        result = {"loss_query_point": numerator / denominator}
+        if ranking:
+            result["loss_query_point_candidate"] = rank_sum / denominator
+        return result
 
     def loss_mask_cldice(
         self,

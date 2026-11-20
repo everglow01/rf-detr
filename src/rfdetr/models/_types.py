@@ -39,6 +39,8 @@ class BuilderArgs(Protocol):
     backbone_lora: bool
     two_stage: bool
     query_point_head: bool
+    query_point_candidate_head: bool
+    query_point_candidate_loss_coef: float
     query_point_class_ids: list[int]
     query_point_loss_coef: float
     use_grouppose_keypoints: bool

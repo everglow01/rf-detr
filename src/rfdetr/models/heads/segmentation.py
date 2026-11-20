@@ -311,6 +311,7 @@ class SegmentationHead(nn.Module):
         image_size: tuple[int, int],
         skip_blocks: bool = False,
         final_layer_only: bool = False,
+        final_spatial: list[Tensor] | None = None,
     ) -> list[Tensor]:
         """Compute mask logits for the paired decoder query layers.
 
@@ -325,6 +326,7 @@ class SegmentationHead(nn.Module):
             skip_blocks: Skip the spatial blocks and compute a mask from the unblocked features. This path requires
                 exactly one query layer.
             final_layer_only: Return only the mask for the last paired block and query layer.
+            final_spatial: Optionally collect the last spatial projection used for decoder masks.
 
         Returns:
             A list of mask-logit tensors shaped ``(B, N, H, W)``, where ``H`` and ``W`` are the image dimensions
@@ -350,6 +352,8 @@ class SegmentationHead(nn.Module):
                 spatial_features_proj = self.spatial_features_proj(spatial_features)
                 qf = self.query_features_proj(self.query_features_block(qf))
                 mask_logits.append(torch.einsum("bchw,bnc->bnhw", spatial_features_proj, qf) + self.bias)
+                if final_spatial is not None and layer == last_layer:
+                    final_spatial.append(spatial_features_proj)
         else:
             assert len(query_features) == 1, "skip_blocks is only supported for length 1 query features"
             spatial_features_proj = self.spatial_features_proj(spatial_features)

@@ -135,6 +135,7 @@ class LWDETR(nn.Module):
         grouppose_keypoint_dim_downscale: int = 1,
         mask_cldice_enabled: bool = False,
         query_point_head: bool = False,
+        query_point_candidate_head: bool = False,
     ) -> None:
         """Initializes the model.
 
@@ -149,6 +150,7 @@ class LWDETR(nn.Module):
             lite_refpoint_refine: TODO
             mask_cldice_enabled: Include input padding for class-selective mask losses.
             query_point_head: Attach a coordinate-only MLP to final decoder queries, independently of GroupPose.
+            query_point_candidate_head: Rank the E2 point and predicted centerline candidates using local mask features.
         """
         super().__init__()
         self.num_queries = num_queries
@@ -239,6 +241,13 @@ class LWDETR(nn.Module):
             # Head initialization must not advance the shared model/training RNG stream.
             with torch.random.fork_rng(devices=[]):
                 self.query_point_embed = MLP(hidden_dim, hidden_dim, 2, 3)
+
+        self.candidate_query_proj: nn.Linear | None = None
+        if query_point_candidate_head:
+            if self.query_point_embed is None or segmentation_head is None:
+                raise ValueError("Candidate ranking requires the segmentation and E2 point heads")
+            with torch.random.fork_rng(devices=[]):
+                self.candidate_query_proj = nn.Linear(hidden_dim, segmentation_head.interaction_dim)
 
         self._export = False
 
@@ -605,7 +614,13 @@ class LWDETR(nn.Module):
 
             if self.segmentation_head is not None:
                 image_size = cast(tuple[int, int], samples.tensors.shape[-2:])
-                if aux_masks:
+                outputs_masks: list[Tensor] | list[dict[str, Tensor]]
+                final_spatial: list[Tensor] = []
+                if self.candidate_query_proj is not None and not self.training:
+                    outputs_masks = self.segmentation_head.forward(
+                        features[0].tensors, hs, image_size, final_layer_only=not aux_masks, final_spatial=final_spatial
+                    )
+                elif aux_masks:
                     outputs_masks = seg_head_fwd(features[0].tensors, hs, image_size)
                 else:
                     outputs_masks = self.segmentation_head.forward(
@@ -617,6 +632,19 @@ class LWDETR(nn.Module):
                 out["pred_masks"] = outputs_masks[-1]
             if self.query_point_embed is not None:
                 out["pred_pick_points"] = self.query_point_embed(hs[-1]).sigmoid()
+            if self.candidate_query_proj is not None:
+                out["candidate_query"] = self.candidate_query_proj(hs[-1])
+                out["candidate_spatial"] = (
+                    cast(dict[str, Tensor], outputs_masks[-1])["spatial_features"]
+                    if self.training
+                    else final_spatial[0]
+                )
+                if samples.mask is None:
+                    ratio = hs.new_ones((hs.shape[1], 2), dtype=torch.float32)
+                else:
+                    valid = ~samples.mask
+                    ratio = torch.stack((valid.any(1).float().mean(1), valid.any(2).float().mean(1)), dim=-1)
+                out["candidate_valid_ratio"] = ratio
             if outputs_keypoints is not None:
                 out["pred_keypoints"] = outputs_keypoints[-1]
             if self.aux_loss:
@@ -952,6 +980,7 @@ def build_model(args: "BuilderArgs") -> LWDETR | tuple[Any, None, None]:
         mask_cldice_enabled=getattr(args, "mask_cldice_loss_coef", 0.0) > 0
         or getattr(args, "mask_quality_loss_coef", 0.0) > 0,
         query_point_head=getattr(args, "query_point_head", False),
+        query_point_candidate_head=getattr(args, "query_point_candidate_head", False),
     )
     return model
 
@@ -985,6 +1014,8 @@ def build_criterion_and_postprocessors(args: "BuilderArgs") -> tuple[SetCriterio
             raise ValueError("query_point_head requires segmentation without GroupPose")
         # Keep the original matcher and all auxiliary/encoder weights unchanged.
         weight_dict["loss_query_point"] = getattr(args, "query_point_loss_coef", 1.0)
+        if getattr(args, "query_point_candidate_head", False):
+            weight_dict["loss_query_point_candidate"] = getattr(args, "query_point_candidate_loss_coef", 1.0)
 
     quality_coef = getattr(args, "mask_quality_loss_coef", 0.0)
     if quality_coef > 0:

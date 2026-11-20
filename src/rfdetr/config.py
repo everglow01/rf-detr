@@ -732,6 +732,7 @@ class ModelConfig(BaseConfig):
     segmentation_head: bool = False
     use_grouppose_keypoints: bool = False
     query_point_head: bool = False
+    query_point_candidate_head: bool = False
     query_point_class_ids: list[int] = Field(default_factory=list)
     keypoint_cross_attn: bool = True
     inter_instance_kp_attn: bool = False
@@ -757,6 +758,8 @@ class ModelConfig(BaseConfig):
     @model_validator(mode="after")
     def validate_query_point_head(self) -> "ModelConfig":
         """Keep the coordinate-only query head independent of GroupPose."""
+        if self.query_point_candidate_head and (not self.query_point_head or len(self.query_point_class_ids) != 1):
+            raise ValueError("query_point_candidate_head requires E2 and one picking-point class")
         if self.query_point_head:
             if not self.segmentation_head or self.use_grouppose_keypoints or self.dec_layers < 1:
                 raise ValueError("query_point_head requires segmentation with decoder layers and no GroupPose")
@@ -1902,6 +1905,7 @@ class SegmentationTrainConfig(TrainConfig):
         mask_ce_loss_coef: Cross-entropy loss weight for mask prediction.
         mask_dice_loss_coef: Dice loss weight for mask prediction.
         query_point_loss_coef: Final-layer coordinate L1 weight when ModelConfig.query_point_head is enabled.
+        query_point_candidate_loss_coef: Final-match ranking weight when the local candidate head is enabled.
         mask_cldice_loss_coef: Final-layer topology loss weight; zero completely disables it.
         mask_cldice_class_ids: Explicit dataset classes receiving topology supervision.
         mask_cldice_iterations: Soft-skeleton erosion iterations after the initial layer.
@@ -1922,6 +1926,7 @@ class SegmentationTrainConfig(TrainConfig):
     mask_ce_loss_coef: float = 5.0
     mask_dice_loss_coef: float = 5.0
     query_point_loss_coef: float = Field(default=1.0, ge=0, allow_inf_nan=False)
+    query_point_candidate_loss_coef: float = Field(default=1.0, gt=0, allow_inf_nan=False)
     mask_quality_loss_coef: float = Field(default=0.0, ge=0, allow_inf_nan=False)
     mask_quality_class_ids: list[int] = Field(default_factory=list)
     mask_quality_chunk_size: int = Field(default=16, ge=1)

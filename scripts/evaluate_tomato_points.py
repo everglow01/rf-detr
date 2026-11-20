@@ -194,6 +194,8 @@ def from_checkpoint(config: Path, checkpoint: Path, annotation: Path, device: st
         keys = weights.get("model", weights.get("state_dict", {}))
         if not any("query_point_embed." in k for k in keys):
             raise ValueError("An E2 point evaluation requires a checkpoint containing the trained point head")
+        if getattr(mc, "query_point_candidate_head", False) and not any("candidate_query_proj." in k for k in keys):
+            raise ValueError("Candidate evaluation requires a checkpoint containing the trained candidate head")
         del keys, weights
     mc.device = device
     tc.eval_batch_size = tc.batch_size = 1

@@ -683,15 +683,21 @@ def _load_model_state(nn_model: LWDETR, model_state: dict[str, Tensor], *, backb
     Raises:
         ImportError: If *model_state* comes from a ``backbone_lora=True`` run and ``peft`` is not installed.
     """
-    point_keys = {key for key in nn_model.state_dict() if key.startswith("query_point_embed.")}
+    expected = set(nn_model.state_dict())
+    point_keys = {key for key in expected if key.startswith("query_point_embed.")}
     checkpoint_point_keys = {key for key in model_state if key.startswith("query_point_embed.")}
-    if point_keys or checkpoint_point_keys:
+    candidate_keys = {key for key in expected if key.startswith("candidate_query_proj.")}
+    checkpoint_candidates = {key for key in model_state if key.startswith("candidate_query_proj.")}
+    if point_keys or checkpoint_point_keys or candidate_keys or checkpoint_candidates:
         # A baseline checkpoint may omit the entire new head; partial heads and other
         # missing learned parameters are not legitimate E2 warm starts.
-        expected = set(nn_model.state_dict())
         missing = expected - set(model_state)
         unexpected = set(model_state) - expected
         allowed_missing = {"_kp_active_mask"} | (point_keys if not checkpoint_point_keys else set())
+        if not checkpoint_candidates:
+            allowed_missing.update(candidate_keys)
+        elif not checkpoint_point_keys:
+            raise ValueError("Candidate checkpoint is missing its E2 point head")
         if missing - allowed_missing or unexpected:
             raise ValueError(
                 f"Incompatible query-point checkpoint: missing={sorted(missing - allowed_missing)}, "
